@@ -72,6 +72,10 @@ jobs:
           fi
 
       - name: Deploy backend and infra
+        env:
+          # 방금 build-and-push가 올린 이미지를 그대로 쓴다. 셸 환경변수가 .env보다 우선하므로
+          # 서버 .env의 BACKEND_IMAGE가 옛 주소(예: 계정 이름 변경 전)여도 영향받지 않는다.
+          BACKEND_IMAGE: ${{ env.IMAGE_NAME }}:${{ github.sha }}
         run: |
           cd "$DEPLOY_PATH"
           docker compose --env-file .env pull mariadb redis pgvector backend
