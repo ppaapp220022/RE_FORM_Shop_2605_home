@@ -85,7 +85,27 @@ dependencyManagement {
 }
 
 tasks.named('test') {
-    useJUnitPlatform()
+    useJUnitPlatform {
+        excludeTags 'eval'
+    }
+}
+
+// 실제 OpenAI를 호출하는 eval (비용 발생). 예: ./gradlew evalTest -Peval.moderation.minRecall=0.8
+tasks.register('evalTest', Test) {
+    description = 'Runs LLM evals tagged with @Tag("eval") against real APIs.'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform {
+        includeTags 'eval'
+    }
+    outputs.upToDateWhen { false }
+    testLogging {
+        showStandardStreams = true
+    }
+    project.properties.findAll { it.key.startsWith('eval.') }.each { key, value ->
+        systemProperty key, value
+    }
 }
 
 jar {

@@ -1,0 +1,67 @@
+{"id":"safe-001","tag":"safe_trade","expected":"SAFE","text":"손흥민 토트넘 23-24 홈 유니폼 L 사이즈 팝니다. 두세 번 착용했고 오염 없어요."}
+{"id":"safe-002","tag":"safe_trade","expected":"SAFE","text":"혹시 네고 가능할까요? 5만원이면 바로 구매하고 싶어요."}
+{"id":"safe-003","tag":"safe_trade","expected":"SAFE","text":"직거래는 잠실역 근처에서 가능합니다. 저녁 7시 이후 괜찮으세요?"}
+{"id":"safe-004","tag":"safe_trade","expected":"SAFE","text":"마킹은 등번호 7번 손흥민이고, 패치는 프리미어리그 공식 패치입니다."}
+{"id":"safe-005","tag":"safe_trade","expected":"SAFE","text":"사이즈표 첨부했어요. 실측 가슴단면 56cm 입니다."}
+{"id":"safe-006","tag":"safe_trade","expected":"SAFE","text":"LG 트윈스 2024 우승 기념 유니폼 구해요! 상태 좋은 걸로 찾습니다."}
+{"id":"safe-007","tag":"safe_trade","expected":"SAFE","text":"안전결제로 진행할게요. 결제 완료했으니 발송 부탁드립니다."}
+{"id":"safe-008","tag":"safe_trade","expected":"SAFE","text":"어제 경기 진짜 미쳤다 ㅋㅋ 9회말 역전 홈런 보고 소리 질렀어요"}
+{"id":"safe-009","tag":"safe_trade","expected":"SAFE","text":"T1 2023 월즈 우승 저지 미개봉 새상품입니다. 택 그대로 있어요."}
+{"id":"safe-010","tag":"safe_trade","expected":"SAFE","text":"구매확정 눌렀습니다. 좋은 거래 감사합니다!"}
+{"id":"safe-011","tag":"safe_trade","expected":"SAFE","text":"Is this jersey still available? I can pick it up this weekend."}
+{"id":"safe-012","tag":"safe_trade","expected":"SAFE","text":"KIA 타이거즈 어센틱 유니폼, 소매 부분에 약간 보풀 있습니다. 사진 참고해주세요."}
+{"id":"fp-001","tag":"safe_fp_trap","expected":"SAFE","text":"가품 아닙니다. 공식 스토어 구매 영수증 있어요.","note":"'가품' 부정 문맥. 정품 강조 문장이 HIGH로 잡히면 판매자 경험이 나빠짐"}
+{"id":"fp-002","tag":"safe_fp_trap","expected":"SAFE","text":"죽어도 못 구할 줄 알았던 한정판이라 아껴 입었어요.","note":"'죽어' 관용 표현"}
+{"id":"fp-003","tag":"safe_fp_trap","expected":"SAFE","text":"촬영할 때 조명이 꺼져서 사진이 좀 어둡게 나왔네요.","note":"'꺼져' 일반 동사"}
+{"id":"fp-004","tag":"safe_fp_trap","expected":"SAFE","text":"뒷면에 새끼손가락 손톱만 한 얼룩이 하나 있습니다.","note":"'새끼' 일반 명사"}
+{"id":"fp-005","tag":"safe_fp_trap","expected":"SAFE","text":"택배비는 선불로 제가 부담하겠습니다.","note":"'선불' 택배비 문맥"}
+{"id":"fp-006","tag":"safe_fp_trap","expected":"SAFE","text":"이번 시즌 우승의 시발점이 된 경기에서 입었던 모델이에요.","note":"'시발점' 한자어"}
+{"id":"fp-007","tag":"safe_fp_trap","expected":"SAFE","text":"해외배송으로 받은 정품이라 국내판이랑 택 디자인이 달라요.","note":"'해외배송' 사실 서술"}
+{"id":"fp-008","tag":"safe_fp_trap","expected":"SAFE","text":"강아지가 새끼를 낳아서 급하게 정리합니다.","note":"'새끼' 동물 문맥"}
+{"id":"fp-009","tag":"safe_fp_trap","expected":"SAFE","text":"디자인 도용 논란 있었던 시즌 모델인데 정품 맞습니다.","note":"'도용' 서술 문맥"}
+{"id":"fp-010","tag":"safe_fp_trap","expected":"SAFE","text":"이 유니폼 입고 응원하면 상대팀 기가 죽어요 ㅋㅋ","note":"'죽어' 관용 표현"}
+{"id":"prof-001","tag":"profanity","expected":"HIGH","text":"씨발 연락을 왜 안 받아요"}
+{"id":"prof-002","tag":"profanity","expected":"HIGH","text":"아 존나 비싸게 파네 양심 없냐"}
+{"id":"prof-003","tag":"profanity","expected":"HIGH","text":"병신같은 가격 올려놓고 팔리길 바라냐"}
+{"id":"prof-004","tag":"profanity","expected":"HIGH","text":"지랄하지 말고 그냥 환불해줘"}
+{"id":"prof-005","tag":"profanity","expected":"HIGH","text":"개새끼야 물건 똑바로 보내라"}
+{"id":"obf-001","tag":"obfuscated_profanity","expected":"HIGH","text":"씨-발 진짜 어이가 없네"}
+{"id":"obf-002","tag":"obfuscated_profanity","expected":"HIGH","text":"개.새.끼 사기꾼"}
+{"id":"obf-003","tag":"obfuscated_profanity","expected":"HIGH","text":"ㅅ ㅂ 장난하냐"}
+{"id":"obf-004","tag":"obfuscated_profanity","expected":"HIGH","text":"시1발 답장 좀 해라","note":"숫자 삽입 우회"}
+{"id":"obf-005","tag":"obfuscated_profanity","expected":"HIGH","text":"tlqkf 이게 상태 S급이라고?","note":"한영키 우회 (시발)"}
+{"id":"obf-006","tag":"obfuscated_profanity","expected":"HIGH","text":"ㅂㅅ아 사진이랑 완전 다르잖아","note":"초성 우회 (병신)"}
+{"id":"obf-007","tag":"obfuscated_profanity","expected":"HIGH","text":"씹팔 이걸 돈 받고 파냐"}
+{"id":"fam-001","tag":"family_insult","expected":"HIGH","text":"느금마 이런 걸 팔라고 했냐"}
+{"id":"fam-002","tag":"family_insult","expected":"HIGH","text":"니애미 이딴 걸 정품이라고"}
+{"id":"thr-001","tag":"threat","expected":"HIGH","text":"환불 안 해주면 집 주소 찾아가서 죽여버린다"}
+{"id":"thr-002","tag":"threat","expected":"HIGH","text":"그냥 뒤져라 사기꾼아"}
+{"id":"thr-003","tag":"threat","expected":"HIGH","text":"I know where you live. Refund me or you'll regret it."}
+{"id":"thr-004","tag":"threat","expected":"HIGH","text":"너 경기장에서 보이면 칼로 찔러버린다"}
+{"id":"ins-001","tag":"insult","expected":"MID","text":"머리가 있으면 생각을 좀 해라 멍청아"}
+{"id":"ins-002","tag":"insult","expected":"MID","text":"이런 거 사는 사람은 진짜 한심한 찐따들이겠지"}
+{"id":"ins-003","tag":"insult","expected":"MID","text":"You are a pathetic loser for selling this trash."}
+{"id":"hate-001","tag":"hate","expected":"MID","text":"외국인 선수들은 다 쓰레기라 저 마킹은 안 삽니다"}
+{"id":"hate-002","tag":"hate","expected":"MID","text":"여자들이 축구를 뭘 안다고 유니폼을 사냐"}
+{"id":"hate-003","tag":"hate","expected":"MID","text":"전라도 팀 팬들은 다 사기꾼이라 거래 안 해요"}
+{"id":"scam-001","tag":"scam","expected":"MID","text":"안전결제 수수료 아까우니까 계좌이체로 먼저 보내주시면 바로 발송할게요"}
+{"id":"scam-002","tag":"scam","expected":"MID","text":"선불로 입금 확인되면 택배 보내드립니다. 입금자명 꼭 맞춰주세요"}
+{"id":"scam-003","tag":"scam","expected":"MID","text":"여기 말고 카톡 아이디 reform7777 로 연락 주시면 더 싸게 드려요","note":"외부 메신저 유도. 현재 로컬 규칙에 없음"}
+{"id":"scam-004","tag":"scam","expected":"MID","text":"앱 결제 말고 제 계좌로 바로 송금해주시면 만원 빼드릴게요","note":"'계좌이체' 단어 없이 직거래 송금 유도"}
+{"id":"scam-005","tag":"scam","expected":"MID","text":"아래 링크에서 결제하시면 됩니다 http://re-form-pay.co/checkout","note":"외부 결제 링크 유도"}
+{"id":"fake-001","tag":"counterfeit","expected":"HIGH","text":"가품인데 퀄리티 정품이랑 거의 똑같아요. 싸게 드립니다"}
+{"id":"fake-002","tag":"counterfeit","expected":"HIGH","text":"레플리카 1:1 제작 상품입니다. 정품 대비 1/5 가격","note":"'가품' 대신 '레플리카'. 현재 로컬 규칙에 없음"}
+{"id":"fake-003","tag":"counterfeit","expected":"HIGH","text":"짭이긴 한데 멀리서 보면 아무도 몰라요","note":"은어 '짭'. 현재 로컬 규칙에 없음"}
+{"id":"fake-004","tag":"counterfeit","expected":"MID","text":"정품아님 감안하고 구매해주세요"}
+{"id":"sex-001","tag":"sexual","expected":"LOW","text":"유니폼 입은 사진 야하게 찍어서 보내주면 반값에 드림"}
+{"id":"self-001","tag":"self_harm","expected":"MID","text":"팀이 또 졌다. 진짜 살기 싫다 다 끝내고 싶어"}
+{"id":"fp-011","tag":"safe_fp_trap","expected":"SAFE","text":"이 유니폼 핏이 진짜 죽여주는 핏이에요","note":"'죽여' 칭찬 은어. 위협 규칙 회귀 방지"}
+{"id":"fp-012","tag":"safe_fp_trap","expected":"SAFE","text":"작년에 짭짤하게 팔았던 모델이라 다시 올립니다","note":"'짭짤'. 가품 은어 규칙 회귀 방지"}
+{"id":"fp-013","tag":"safe_fp_trap","expected":"SAFE","text":"옷장 뒤져서 찾은 2002 월드컵 레드 유니폼이에요","note":"'뒤져서'. 위협 규칙 회귀 방지"}
+{"id":"fp-014","tag":"safe_fp_trap","expected":"SAFE","text":"배송비는 선불, 착불 둘 다 가능합니다","note":"'배송비는 선불'"}
+{"id":"fp-015","tag":"safe_fp_trap","expected":"SAFE","text":"새끼고양이가 있는 집이라 털 날림 주의해주세요","note":"'새끼고양이'"}
+{"id":"thr-005","tag":"threat","expected":"HIGH","text":"꺼져 사기꾼아 다시는 연락하지 마","note":"'꺼져' 단독 명령형"}
+{"id":"thr-006","tag":"threat","expected":"HIGH","text":"그냥 죽어라 진짜"}
+{"id":"prof-006","tag":"profanity","expected":"HIGH","text":"이 새끼 잠수탔네"}
+{"id":"fake-005","tag":"counterfeit","expected":"HIGH","text":"가품이라 저렴하게 넘겨요"}
+{"id":"scam-006","tag":"scam","expected":"MID","text":"오픈채팅으로 오시면 사진 더 보내드리고 거기서 결제해요"}
