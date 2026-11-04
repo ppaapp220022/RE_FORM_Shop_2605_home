@@ -1,9 +1,9 @@
 name: AI Eval
 
 on:
-  pull_request:
+  # pull_request 이벤트는 GitHub이 PR 머지 커밋을 만들어야 실행되므로, 브랜치 push 기준으로 실행
   push:
-    branches: [ main ]
+    branches: [ '**' ]
   # OpenAI 실호출 eval은 비용이 들어 수동 실행만 허용 (Settings > Secrets 에 OPENAI_API_KEY 필요)
   workflow_dispatch:
     inputs:
@@ -11,6 +11,10 @@ on:
         description: 'OpenAI 실호출 eval(evalTest)도 실행'
         type: boolean
         default: false
+
+concurrency:
+  group: eval-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   local-eval:
