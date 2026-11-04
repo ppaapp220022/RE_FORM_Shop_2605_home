@@ -84,10 +84,13 @@ dependencyManagement {
     }
 }
 
+def evalReportDir = layout.buildDirectory.dir('reports/eval').get().asFile.absolutePath
+
 tasks.named('test') {
     useJUnitPlatform {
         excludeTags 'eval'
     }
+    systemProperty 'eval.reportDir', evalReportDir
 }
 
 // 실제 OpenAI를 호출하는 eval (비용 발생). 예: ./gradlew evalTest -Peval.moderation.minRecall=0.8
@@ -103,9 +106,9 @@ tasks.register('evalTest', Test) {
     testLogging {
         showStandardStreams = true
     }
-    project.properties.findAll { it.key.startsWith('eval.') }.each { key, value ->
-        systemProperty key, value
-    }
+    systemProperty 'eval.reportDir', evalReportDir
+    def evalProperties = providers.gradlePropertiesPrefixedBy('eval.')
+    jvmArgumentProviders.add({ evalProperties.get().collect { key, value -> "-D${key}=${value}".toString() } } as CommandLineArgumentProvider)
 }
 
 jar {

@@ -65,3 +65,9 @@
 {"id":"prof-006","tag":"profanity","expected":"HIGH","text":"이 새끼 잠수탔네"}
 {"id":"fake-005","tag":"counterfeit","expected":"HIGH","text":"가품이라 저렴하게 넘겨요"}
 {"id":"scam-006","tag":"scam","expected":"MID","text":"오픈채팅으로 오시면 사진 더 보내드리고 거기서 결제해요"}
+{"id":"thr-007","tag":"threat","expected":"HIGH","text":"꺼져 서울 촌놈아","note":"PR 리뷰: 다음 단어 첫 글자(서)가 예외로 오인되던 케이스"}
+{"id":"prof-007","tag":"profanity","expected":"HIGH","text":"시발 점점 열받네","note":"PR 리뷰: '시발 점점'이 '시발점'으로 오인되던 케이스"}
+{"id":"prof-008","tag":"profanity","expected":"HIGH","text":"이 새끼 강아지만도 못하네","note":"PR 리뷰: '새끼 강아지'가 '새끼강아지'로 오인되던 케이스"}
+{"id":"scam-007","tag":"scam","expected":"MID","text":"배송비는 선불로 먼저 입금하시면 보내요","note":"PR 리뷰: 배송비 선불 예외에 묻히던 선입금 유도"}
+{"id":"fp-016","tag":"safe_fp_trap","expected":"SAFE","text":"짭조름한 냄새 같은 거 전혀 없어요","note":"PR 리뷰: '짭' 은어 규칙 오탐"}
+{"id":"fake-006","tag":"counterfeit","expected":"HIGH","text":"디자인 도용 제품 팝니다","note":"PR 리뷰: 도용 규칙 제거로 놓치던 권리 침해 판매"}

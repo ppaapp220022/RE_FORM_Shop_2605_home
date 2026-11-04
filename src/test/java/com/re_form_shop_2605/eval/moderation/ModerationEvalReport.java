@@ -84,7 +84,7 @@ public class ModerationEvalReport {
                 title, results.size(), precision(), recall(), falsePositiveRate(), exactMatchRate(), tp, fp, fn, tn);
     }
 
-    /* build/reports/eval/{fileName} 에 마크다운 리포트 저장 후 경로 반환 */
+    /* eval.reportDir(Gradle이 build/reports/eval 로 지정)에 마크다운 리포트 저장 후 경로 반환 */
     public Path write(String fileName) {
         StringBuilder md = new StringBuilder();
         md.append("# ").append(title).append("\n\n");
@@ -134,7 +134,7 @@ public class ModerationEvalReport {
         }
 
         try {
-            Path dir = Path.of("build", "reports", "eval");
+            Path dir = Path.of(System.getProperty("eval.reportDir", "build/reports/eval"));
             Files.createDirectories(dir);
             Path file = dir.resolve(fileName);
             Files.writeString(file, md.toString(), StandardCharsets.UTF_8);

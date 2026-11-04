@@ -9,14 +9,16 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.moderation.ModerationPrompt;
+import org.springframework.ai.moderation.ModerationModel;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiModerationModel;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -39,12 +41,21 @@ class ModerationLiveEvalTest {
         OpenAiModerationModel moderationModel = OpenAiModerationModel.builder().build();
         ChatClient.Builder chatClientBuilder = ChatClient.builder(OpenAiChatModel.builder().build());
 
-        // checkDraft는 API 장애 시 SAFE로 fallback 하므로, 먼저 직접 호출해 장애가 정상 판정으로 집계되는 것을 막는다
-        moderationModel.call(new ModerationPrompt("eval smoke check"));
+        // checkDraft는 API 장애 시 SAFE로 fallback 하므로, 호출 실패를 세어 두었다가 장애가 정상 판정으로 집계되는 것을 막는다
+        AtomicInteger apiFailures = new AtomicInteger();
+        ModerationModel countingModel = request -> {
+            try {
+                return moderationModel.call(request);
+            } catch (RuntimeException e) {
+                apiFailures.incrementAndGet();
+                log.error("[Eval] Moderation API 호출 실패: {}", e.getMessage());
+                throw e;
+            }
+        };
 
         // checkDraft는 DB를 쓰지 않으므로 repository 없이 생성
         ModerationService moderationService =
-                new ModerationService(moderationModel, new ModerationKeyword(), chatClientBuilder, null);
+                new ModerationService(countingModel, new ModerationKeyword(), chatClientBuilder, null);
 
         List<ModerationEvalReport.Result> results = new ArrayList<>();
         for (ModerationEvalCase evalCase : ModerationEvalCase.load()) {
@@ -66,6 +77,7 @@ class ModerationLiveEvalTest {
         log.info("[Eval] {}", report.summary());
         log.info("[Eval] report={}", path);
 
+        assertEquals(0, apiFailures.get(), "Moderation API 호출 실패 케이스는 SAFE로 집계되어 지표가 왜곡됩니다. 다시 실행해주세요.");
         assertAtLeast("eval.moderation.minPrecision", report.precision(), report);
         assertAtLeast("eval.moderation.minRecall", report.recall(), report);
         assertAtMost("eval.moderation.maxFalsePositiveRate", report.falsePositiveRate(), report);
