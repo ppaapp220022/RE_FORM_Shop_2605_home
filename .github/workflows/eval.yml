@@ -1,0 +1,76 @@
+name: AI Eval
+
+on:
+  pull_request:
+  push:
+    branches: [ main ]
+  # OpenAI 실호출 eval은 비용이 들어 수동 실행만 허용 (Settings > Secrets 에 OPENAI_API_KEY 필요)
+  workflow_dispatch:
+    inputs:
+      live:
+        description: 'OpenAI 실호출 eval(evalTest)도 실행'
+        type: boolean
+        default: false
+
+jobs:
+  local-eval:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: 'corretto'
+          cache: 'gradle'
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      # API 호출 없이 결정적으로 도는 로컬 규칙 eval. 기준치 미달 시 실패
+      - name: Moderation keyword eval
+        run: ./gradlew test --tests '*ModerationKeywordEvalTest' --no-daemon
+
+      - name: Upload eval report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report-local
+          path: build/reports/eval/
+
+  live-eval:
+    if: github.event_name == 'workflow_dispatch' && inputs.live
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: 'corretto'
+          cache: 'gradle'
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: OpenAI live eval
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: >
+          ./gradlew evalTest --no-daemon
+          -Peval.moderation.minRecall=0.85
+          -Peval.moderation.maxFalsePositiveRate=0.05
+          -Peval.suggestion.minPassRate=0.9
+
+      - name: Upload eval report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report-live
+          path: build/reports/eval/
