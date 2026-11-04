@@ -1,10 +1,13 @@
-name: AI Eval
+# 결정적 검사. main ruleset의 필수 체크 `checks`다.
+# 컴파일 + 로컬 모더레이션 eval(API 호출 없음)을 돌리고, 기준치 미달이면 실패한다.
+# OpenAI 실호출 eval은 비용이 들어 workflow_dispatch(live=true)로만 실행한다 (Secrets에 OPENAI_API_KEY 필요).
+name: checks
 
 on:
-  # pull_request 이벤트는 GitHub이 PR 머지 커밋을 만들어야 실행되므로, 브랜치 push 기준으로 실행
+  # pull_request 이벤트는 GitHub이 PR 머지 커밋을 만들어야 실행되므로, 브랜치 push 기준으로 실행한다.
+  # 체크 결과는 커밋에 붙기 때문에 PR의 필수 체크로도 그대로 인식된다.
   push:
     branches: [ '**' ]
-  # OpenAI 실호출 eval은 비용이 들어 수동 실행만 허용 (Settings > Secrets 에 OPENAI_API_KEY 필요)
   workflow_dispatch:
     inputs:
       live:
@@ -13,15 +16,15 @@ on:
         default: false
 
 concurrency:
-  group: eval-${{ github.ref }}
+  group: checks-${{ github.ref }}
   cancel-in-progress: true
 
-jobs:
-  local-eval:
-    runs-on: ubuntu-22.04
-    permissions:
-      contents: read
+permissions:
+  contents: read
 
+jobs:
+  checks:
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v6
 
@@ -34,7 +37,9 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      # API 호출 없이 결정적으로 도는 로컬 규칙 eval. 기준치 미달 시 실패
+      - name: Compile
+        run: ./gradlew compileJava compileTestJava --no-daemon
+
       - name: Moderation keyword eval
         run: ./gradlew test --tests '*ModerationKeywordEvalTest' --no-daemon
 
@@ -48,9 +53,6 @@ jobs:
   live-eval:
     if: github.event_name == 'workflow_dispatch' && inputs.live
     runs-on: ubuntu-22.04
-    permissions:
-      contents: read
-
     steps:
       - uses: actions/checkout@v6
 

@@ -25,6 +25,7 @@
 - [AI 품질 평가 (Eval)](#ai-품질-평가-eval)
 - [기술 스택](#기술-스택)
 - [로컬 환경 설정](#로컬-환경-설정)
+- [브랜치 · PR 규칙](#브랜치--pr-규칙)
 - [트러블슈팅](#트러블슈팅)
 - [팀 회고](#팀-회고)
 - [팀 문서](#팀-문서)
@@ -849,6 +850,19 @@ implementation 'org.springframework.ai:spring-ai-starter-model-openai'
 - 서버 실행 전 반드시 Docker pgvector 컨테이너 실행
 - `.env` 파일에 `OPENAI_API_KEY` 없으면 서버 실행 시 오류
 - `reform_vector` DB가 없으면 서버 실행 시 오류
+
+---
+
+## 브랜치 · PR 규칙
+
+`main`은 GitHub ruleset("main 보호")으로 보호합니다.
+
+- `main`에 직접 push, 강제 push, 삭제 불가. 모든 변경은 작업 브랜치 → PR로 반영
+- 머지는 **squash merge만** 허용 (선형 히스토리 유지). 커밋 제목은 PR 제목, 본문은 PR 설명
+- 필수 체크 `checks` 통과 필요: 컴파일 + 로컬 모더레이션 eval ([`.github/workflows/checks.yml`](.github/workflows/checks.yml))
+- 머지된 브랜치는 자동 삭제, 체크 통과 시 자동 머지(auto-merge) 사용 가능
+- 1인 운영이라 리뷰 승인은 필수가 아니며, 관리자는 긴급 시 규칙을 우회할 수 있음
+- `main`에 머지되면 홈서버 자동 배포(`cicd.yml`)가 실행됨
 
 ---
 
