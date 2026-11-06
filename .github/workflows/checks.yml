@@ -73,6 +73,7 @@ jobs:
           -Peval.moderation.minRecall=0.85
           -Peval.moderation.maxFalsePositiveRate=0.05
           -Peval.suggestion.minPassRate=0.9
+          -Peval.listing.minPassRate=0.75
 
       - name: Upload eval report
         if: always()
