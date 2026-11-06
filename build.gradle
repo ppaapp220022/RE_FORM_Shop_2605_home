@@ -111,6 +111,16 @@ tasks.register('evalTest', Test) {
     jvmArgumentProviders.add({ evalProperties.get().collect { key, value -> "-D${key}=${value}".toString() } } as CommandLineArgumentProvider)
 }
 
+// 판매글 eval 이미지 생성 (cases.jsonl의 render 스펙 → src/test/resources/eval/listing/images/*.png)
+tasks.register('generateListingEvalImages', JavaExec) {
+    description = 'Draws labeled uniform images for the listing eval dataset.'
+    group = 'verification'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.re_form_shop_2605.eval.listing.ListingEvalImageGenerator'
+    args 'src/test/resources/eval/listing/images'
+    systemProperty 'java.awt.headless', 'true'
+}
+
 jar {
     enabled = false
 }
