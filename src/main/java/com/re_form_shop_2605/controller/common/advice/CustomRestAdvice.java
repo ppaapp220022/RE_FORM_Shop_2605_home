@@ -12,6 +12,7 @@ import org.springframework.validation.BindingResult;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -128,6 +129,19 @@ public class CustomRestAdvice {
 
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(ApiResponse.fail("요청한 데이터를 찾을 수 없습니다.", errorsMap));
+    }
+
+    // 업로드 용량 한도(spring.servlet.multipart.max-file-size 등)를 넘긴 요청을 413으로 반환
+    // 처리하지 않으면 아래 Exception 핸들러가 500으로 응답해 클라이언트가 서버 오류와 구분하지 못한다
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<ApiResponse<Map<String, String>>> handleMaxUploadSizeExceededException(MaxUploadSizeExceededException ex) {
+        log.warn("[CustomRestAdvice] 업로드 용량 초과: {}", ex.getMessage());
+
+        Map<String, String> errorsMap = new HashMap<>();
+        errorsMap.put("message", ex.getMessage());
+
+        return ResponseEntity.status(HttpStatus.CONTENT_TOO_LARGE)
+                .body(ApiResponse.fail("업로드할 수 있는 파일 용량을 초과했습니다.", errorsMap));
     }
 
     // 위에서 처리하지 못한 예외를 500 공통 응답으로 반환
