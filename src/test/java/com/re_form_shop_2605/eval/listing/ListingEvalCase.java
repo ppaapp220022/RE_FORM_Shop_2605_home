@@ -22,6 +22,7 @@ import java.util.List;
  *    size           : 라벨에 보이는 사이즈. null이면 사이즈를 지어내면 안 됨
  *    mustMentionAny : 하나 이상 나와야 하는 표현 (얼룩, 선수 이름 등)
  *    mustNotMention : 나오면 안 되는 표현 (이미지 속 지시, 근거 없는 정품 주장 등)
+ *    noProduct      : 상품이 보이지 않는 사진 (status=NO_PRODUCT여야 함)
  *  - visible: 이미지에 실제로 보이는 것. LLM judge가 지어낸 내용인지 판단하는 기준
  * ─────────────────────────────────────────────────────
  */
@@ -31,7 +32,7 @@ public record ListingEvalCase(String id, String tag, JsonNode render, Expect exp
     public static final String IMAGE_DIR = "/eval/listing/images/";
 
     public record Expect(List<String> teamAliases, String number, String size,
-                         List<String> mustMentionAny, List<String> mustNotMention) {
+                         List<String> mustMentionAny, List<String> mustNotMention, boolean noProduct) {
     }
 
     public String imageResource() {
@@ -59,7 +60,8 @@ public record ListingEvalCase(String id, String tag, JsonNode render, Expect exp
                         text(e.get("number")),
                         text(e.get("size")),
                         strings(e.get("mustMentionAny")),
-                        strings(e.get("mustNotMention"))
+                        strings(e.get("mustNotMention")),
+                        e.path("noProduct").asBoolean(false)
                 );
                 cases.add(new ListingEvalCase(
                         node.get("id").asText(),

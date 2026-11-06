@@ -66,10 +66,11 @@ public class AiListingService {
 
                     [상품이 유니폼이 아니거나 보이지 않을 때]
                     - 유니폼이 아니면 보이는 상품 그대로 작성합니다 (유니폼이라고 쓰지 않습니다).
-                    - 상품이 보이지 않으면 title은 "상품 확인 불가", description은 상품이 잘 보이는 사진을 다시 올려 달라는 안내로 씁니다.
+                    - 판매할 상품이 보이지 않으면 productVisible을 false로 하고 title, description은 빈 문자열로 둡니다.
 
                     반드시 아래 JSON 형식만 출력하세요.
                     {
+                      "productVisible": true,
                       "title": "판매글 제목 (20자 이내, 종목·팀·사이즈(보일 때만) 포함)",
                       "description": "판매글 설명 (150자 이내, 보이는 상태·하자·특징 포함)"
                     }
@@ -111,9 +112,13 @@ public class AiListingService {
                     .trim();
 
             JsonNode node = objectMapper.readTree(cleaned);
+            // 상품이 보이지 않는 사진은 판매글 대신 NO_PRODUCT로 알려 프론트가 다시 업로드를 안내하게 한다
+            if (!node.path("productVisible").asBoolean(true)) {
+                return AiListingSuggestResponseDTO.noProduct();
+            }
             String title = node.get("title").asText(""); // 자바형태로 변경
             String description = node.get("description").asText(""); // 자바형태로 변경
-            return new AiListingSuggestResponseDTO(title, description);
+            return new AiListingSuggestResponseDTO(title, description, AiListingSuggestResponseDTO.OK);
 
         } catch (Exception e) {
             log.error("[AiListingService] JSON 파싱 실패: {}", e.getMessage());
