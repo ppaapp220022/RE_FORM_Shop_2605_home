@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.openai.OpenAiEmbeddingModel;
+import org.springframework.ai.openai.OpenAiEmbeddingOptions;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.SimpleVectorStore;
 import org.springframework.ai.vectorstore.VectorStore;
@@ -47,6 +48,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *    통과     : 정답이 있으면 hybrid 상위 5개 안에 정답이 하나 이상, 정답이 없으면 hybrid 결과가 0건
  *  - 유사도 기준값 진단: 기준값 없이 전체 순위를 받아, 기준값별 Recall@10과 정답 없는 검색어의 오탐 건수를 비교
  *  - 기준치는 -Peval.search.minRecallAt10=0.8 처럼 넘겼을 때만 검사
+ *  - 임베딩 모델 비교는 -Peval.search.embeddingModel=text-embedding-3-small (차원은 PGVector 컬럼과 같은 1536으로 고정)
+ *    유사도 기준값 비교도 같이 하려면 -Peval.search.threshold=0.3 (기본은 운영 기준값)
  * ─────────────────────────────────────────────────────
  */
 @Log4j2
@@ -54,7 +57,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @EnabledIfEnvironmentVariable(named = "OPENAI_API_KEY", matches = ".+")
 class SemanticSearchEvalTest {
 
-    private static final double[] THRESHOLDS = {0.0, 0.70, 0.75, 0.78, 0.80, 0.82, 0.84, 0.86, 0.88};
+    private static final double[] THRESHOLDS = {0.0, 0.20, 0.25, 0.26, 0.27, 0.28, 0.29, 0.30, 0.32, 0.35, 0.36, 0.37, 0.38, 0.39, 0.40, 0.45, 0.70, 0.75, 0.78, 0.80, 0.82, 0.84};
+    private static final int PGVECTOR_DIMENSIONS = 1536;
 
     /* scores: 기준값 없이 받은 전체 순위의 postId → 유사도 (진단용) */
     record Row(SearchEvalCase evalCase, List<Long> vector, List<Long> hybrid, Map<Long, Double> scores) {
@@ -70,8 +74,11 @@ class SemanticSearchEvalTest {
 
     @Test
     void semanticSearchQuality() {
-        // 운영과 같은 기본 임베딩 모델 (application.properties에 모델 지정 없음)
-        OpenAiEmbeddingModel embeddingModel = new OpenAiEmbeddingModel();
+        // 기본은 운영과 같은 기본 임베딩 모델 (application.properties에 모델 지정 없음)
+        String model = System.getProperty("eval.search.embeddingModel");
+        OpenAiEmbeddingModel embeddingModel = model == null
+                ? new OpenAiEmbeddingModel()
+                : new OpenAiEmbeddingModel(OpenAiEmbeddingOptions.builder().model(model).dimensions(PGVECTOR_DIMENSIONS).build());
         SimpleVectorStore vectorStore = SimpleVectorStore.builder(embeddingModel).build();
         ObjectProvider<VectorStore> provider = new StaticListableBeanFactory(Map.of("vectorStore", vectorStore))
                 .getBeanProvider(VectorStore.class);
@@ -85,13 +92,20 @@ class SemanticSearchEvalTest {
 
         PostSearchService searchService = new PostSearchService(null, null, provider);
         List<Row> rows = new ArrayList<>();
+        // 모델마다 유사도 분포가 달라 운영 기준값(0.7)이 맞지 않을 수 있으므로, 넘겼을 때는 그 기준값으로 자른다
+        String thresholdOverride = System.getProperty("eval.search.threshold");
+        double threshold = thresholdOverride == null
+                ? PostSearchService.SIMILARITY_THRESHOLD : Double.parseDouble(thresholdOverride);
         for (SearchEvalCase evalCase : SearchEvalCase.loadQueries()) {
-            List<Long> vector = searchService.findSimilarPostIds(evalCase.query());
-            rows.add(new Row(evalCase, vector, hybrid(vector, evalCase.query(), posts),
-                    allScores(vectorStore, evalCase.query(), posts.size())));
+            Map<Long, Double> scores = allScores(vectorStore, evalCase.query(), posts.size());
+            List<Long> vector = thresholdOverride == null
+                    ? searchService.findSimilarPostIds(evalCase.query())
+                    : scores.entrySet().stream().filter(e -> e.getValue() >= threshold).map(Map.Entry::getKey)
+                            .limit(PostSearchService.SIMILARITY_TOP_K).toList();
+            rows.add(new Row(evalCase, vector, hybrid(vector, evalCase.query(), posts), scores));
         }
 
-        String summary = summarize(rows, embeddingModel.getOptions().getModel());
+        String summary = summarize(rows, embeddingModel.getOptions().getModel(), threshold);
         Path path = write(rows, posts, summary);
         log.info("[Eval] {}", summary);
         log.info("[Eval] report={}", path);
@@ -164,12 +178,12 @@ class SemanticSearchEvalTest {
         return rows.isEmpty() ? 0.0 : (double) rows.stream().filter(Row::passed).count() / rows.size();
     }
 
-    private static String summarize(List<Row> rows, String model) {
+    private static String summarize(List<Row> rows, String model, double threshold) {
         List<Row> answerable = answerable(rows);
         return String.format(Locale.ROOT,
-                "Search eval | model=%s queries=%d passRate=%.3f hybrid R@5=%.3f R@10=%.3f MRR=%.3f"
+                "Search eval | model=%s threshold=%.2f queries=%d passRate=%.3f hybrid R@5=%.3f R@10=%.3f MRR=%.3f"
                         + " | vector R@5=%.3f R@10=%.3f MRR=%.3f | noneFalsePositives=%d",
-                model, rows.size(), passRate(rows),
+                model, threshold, rows.size(), passRate(rows),
                 mean(answerable, r -> recallAt(r.hybrid(), r.evalCase().relevant(), 5)),
                 mean(answerable, r -> recallAt(r.hybrid(), r.evalCase().relevant(), 10)),
                 mean(answerable, r -> reciprocalRank(r.hybrid(), r.evalCase().relevant())),
