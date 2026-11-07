@@ -14,6 +14,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.LongStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -21,6 +22,7 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -158,6 +160,32 @@ class PostReembedJobTest {
     }
 
     @Test
+    void run_묶음이_연달아_통째로_실패하면_중단() {
+        PostVectorService vectorService = mock(PostVectorService.class);
+        when(vectorService.savePostVectors(anyList()))
+                .thenReturn(new PostVectorService.BatchResult(0, 100, "AuthenticationException: invalid key"));
+        PostReembedJob job = new PostReembedJob(
+                repository(List.of(posts(1, 100), posts(101, 200), posts(201, 300), posts(301, 400))), vectorService);
+
+        job.start();
+        PostReembedJob.Status status = await(job);
+
+        assertThat(status.state()).isEqualTo(PostReembedJob.State.FAILED);
+        assertThat(status.processed()).isEqualTo(300);
+        assertThat(status.lastError()).contains("3묶음 연속 전체 실패").contains("invalid key");
+        verify(vectorService, times(3)).savePostVectors(anyList());
+        verify(vectorService, never()).deleteVectorsOfOtherModels();
+    }
+
+    @Test
+    void status_재시작_뒤에는_다시_실행하라는_안내() {
+        PostReembedJob job = new PostReembedJob(repository(List.of()), mock(PostVectorService.class));
+
+        assertThat(job.status().state()).isEqualTo(PostReembedJob.State.IDLE);
+        assertThat(job.status().cleanup()).contains("다시 실행");
+    }
+
+    @Test
     void start_실행기가_닫혔으면_FAILED로_되돌림() {
         PostReembedJob job = new PostReembedJob(repository(List.of(posts(1, 3))), mock(PostVectorService.class));
         job.shutdown();
@@ -167,10 +195,19 @@ class PostReembedJobTest {
         assertThat(job.status().lastError()).startsWith("RejectedExecutionException");
     }
 
+    /* 작업 스레드가 끝날 때까지 짧게 쉬며 기다린다. 5초 안에 끝나지 않으면 실패 */
     private static PostReembedJob.Status await(PostReembedJob job) {
         long deadline = System.currentTimeMillis() + 5000;
-        while (job.status().state() == PostReembedJob.State.RUNNING && System.currentTimeMillis() < deadline) {
-            Thread.onSpinWait();
+        while (job.status().state() == PostReembedJob.State.RUNNING) {
+            if (System.currentTimeMillis() > deadline) {
+                fail("재임베딩 작업이 5초 안에 끝나지 않았습니다: " + job.status());
+            }
+            try {
+                Thread.sleep(10);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                fail("대기 중 인터럽트");
+            }
         }
         return job.status();
     }

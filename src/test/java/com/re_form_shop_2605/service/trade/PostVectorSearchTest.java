@@ -25,6 +25,7 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -106,6 +107,20 @@ class PostVectorSearchTest {
         assertThat(result.saved()).isEqualTo(2);
         assertThat(result.failed()).isEqualTo(1);
         assertThat(result.error()).isEqualTo("IllegalStateException: token limit");
+    }
+
+    @Test
+    void savePostVectors_글마다_재시도도_연달아_실패하면_나머지는_건너뜀() {
+        VectorStore vectorStore = mock(VectorStore.class);
+        doThrow(new RuntimeException("down", new IllegalStateException("invalid key"))).when(vectorStore).add(anyList());
+
+        PostVectorService.BatchResult result = vectorService(vectorStore)
+                .savePostVectors(List.of(post(1L), post(2L), post(3L), post(4L), post(5L)));
+
+        assertThat(result.saved()).isZero();
+        assertThat(result.failed()).isEqualTo(5);
+        // 묶음 1번 + 글마다 3번까지만 시도
+        verify(vectorStore, times(1 + PostVectorService.MAX_CONSECUTIVE_FAILURES)).add(anyList());
     }
 
     @Test

@@ -31,16 +31,20 @@ import java.util.concurrent.atomic.AtomicReference;
 public class PostReembedJob {
 
     static final int BATCH_SIZE = 100;
+    static final int MAX_CONSECUTIVE_FAILED_BATCHES = 3;
     private static final String SEARCH_CHECK_QUERY = "유니폼";
 
     public enum State { IDLE, RUNNING, DONE, FAILED }
 
-    /* cleanup: 이전 모델 벡터 삭제 결과나 건너뛴 이유
+    /* 상태는 메모리에만 있어 서버가 재시작되면 IDLE로 돌아간다. IDLE이면 cleanup에 그 사실과 다시 실행하라는 안내를 넣는다
+       cleanup: 이전 모델 벡터 삭제 결과나 건너뛴 이유
        searchCheck: 끝난 뒤 운영 기준값을 넘는 검색 결과 수(최대 5)와 최고 점수, 또는 오류 메시지 */
     public record Status(State state, long total, int processed, int embedded, int failed, String cleanup,
                          String searchCheck, String lastError, LocalDateTime startedAt, LocalDateTime finishedAt) {
 
-        static final Status IDLE = new Status(State.IDLE, 0, 0, 0, 0, null, null, null, null, null);
+        static final Status IDLE = new Status(State.IDLE, 0, 0, 0, 0,
+                "이 서버가 시작된 뒤 실행한 재임베딩이 없습니다. 재시작으로 이전 작업이 끊겼을 수 있으니 다시 실행하세요 (덮어쓰기라 안전)",
+                null, null, null, null);
     }
 
     private final PostRepository postRepository;
@@ -85,15 +89,20 @@ public class PostReembedJob {
 
     void run() {
         try {
-            int page = 0;
+            int page = 0, consecutiveFailedBatches = 0;
             while (true) {
                 List<Post> batch = postRepository.findAll(PageRequest.of(page++, BATCH_SIZE, Sort.by("postId"))).getContent();
                 if (batch.isEmpty()) break;
                 PostVectorService.BatchResult result = postVectorService.savePostVectors(batch);
+                // 묶음이 연달아 통째로 실패하면 전체 장애로 보고 멈춘다 (계속 돌면 실패 호출과 로그만 쌓인다)
+                consecutiveFailedBatches = result.saved() == 0 ? consecutiveFailedBatches + 1 : 0;
                 status.updateAndGet(s -> new Status(s.state(), s.total(), s.processed() + batch.size(),
                         s.embedded() + result.saved(), s.failed() + result.failed(), null, null,
                         result.error() != null ? result.error() : s.lastError(), s.startedAt(), null));
                 log.info("재임베딩 진행 {} / {} (실패 {})", status.get().processed(), status.get().total(), status.get().failed());
+                if (consecutiveFailedBatches >= MAX_CONSECUTIVE_FAILED_BATCHES) {
+                    throw new IllegalStateException(consecutiveFailedBatches + "묶음 연속 전체 실패로 중단 - " + result.error());
+                }
             }
 
             Status progress = status.get();

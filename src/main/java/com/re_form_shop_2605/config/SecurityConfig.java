@@ -174,7 +174,8 @@ public class SecurityConfig {
                                 "/api/listings",
                                 "/api/listings/**",
                                 "/api/statistics",
-                                "/api/recommendations"
+                                "/api/recommendations",
+                                "/api/version"
                         )
                         .permitAll()
                         .anyRequest().authenticated()

@@ -29,6 +29,7 @@ public class PostVectorService {
     private static final String VECTOR_TABLE = "vector_store"; // PgVectorStore 기본 테이블
     private static final String MODEL_KEY = "embeddingModel";
     static final int MAX_CONTENT_LENGTH = 1000;
+    static final int MAX_CONSECUTIVE_FAILURES = 3;
 
     private final ObjectProvider<VectorStore> vectorStoreProvider;
     private final ObjectProvider<DataSource> postgresDataSourceProvider;
@@ -67,6 +68,7 @@ public class PostVectorService {
 
     /* 여러 판매글을 한 번에 저장 (재임베딩용) */
     // 임베딩 API를 묶음 단위로 호출해 글마다 호출하는 것보다 빠르다. 묶음 저장이 실패하면 글마다 다시 시도해 실패한 글만 걸러낸다
+    //  - 글마다 다시 시도해도 연달아 실패하면 키 만료·저장소 장애 같은 전체 장애로 보고 나머지는 시도하지 않는다
     public BatchResult savePostVectors(List<Post> posts) {
         VectorStore vectorStore = vectorStoreProvider.getIfAvailable();
         if (vectorStore == null) {
@@ -77,7 +79,16 @@ public class PostVectorService {
             return new BatchResult(posts.size(), 0, null);
         } catch (Exception exception) {
             log.warn("savePostVectors : 묶음 저장 실패, 글마다 다시 시도합니다  |  {}건", posts.size(), exception);
-            int saved = (int) posts.stream().filter(this::savePostVector).count();
+            int saved = 0, consecutiveFailures = 0;
+            for (Post post : posts) {
+                if (savePostVector(post)) {
+                    saved++;
+                    consecutiveFailures = 0;
+                } else if (++consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+                    log.error("savePostVectors : 글마다 다시 시도해도 {}건 연속 실패해 나머지를 건너뜁니다", consecutiveFailures);
+                    break;
+                }
+            }
             return new BatchResult(saved, posts.size() - saved, rootMessage(exception));
         }
     }
