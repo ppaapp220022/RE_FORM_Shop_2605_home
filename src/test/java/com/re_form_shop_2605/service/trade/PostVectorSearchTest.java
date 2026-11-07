@@ -15,6 +15,7 @@ import javax.sql.DataSource;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -44,7 +45,7 @@ class PostVectorSearchTest {
     }
 
     private static PostSearchService searchService(VectorStore vectorStore) {
-        return new PostSearchService(null, null, provider(vectorStore), MODEL);
+        return new PostSearchService(null, null, provider(vectorStore), MODEL, null);
     }
 
     @SuppressWarnings("unchecked")
@@ -251,5 +252,58 @@ class PostVectorSearchTest {
         VectorStore vectorStore = mock(VectorStore.class);
         when(vectorStore.similaritySearch(any(SearchRequest.class))).thenThrow(new RuntimeException("db down"));
         assertThat(searchService(vectorStore).findSimilarPostIds("기아")).isEmpty();
+    }
+
+    @Test
+    void findSimilarPostIds_재정렬하면_후보를_넓혀_모델이_고른_글만_순서대로() {
+        VectorStore vectorStore = mock(VectorStore.class);
+        when(vectorStore.similaritySearch(any(SearchRequest.class)))
+                .thenReturn(List.of(result(3L, 0.40), result(1L, 0.35), result(2L, 0.27)));
+        PostSearchReranker reranker = mock(PostSearchReranker.class);
+        when(reranker.rerank(anyString(), anyList())).thenReturn(Optional.of(List.of(2L, 3L)));
+
+        List<Long> ids = new PostSearchService(null, null, provider(vectorStore), MODEL, reranker)
+                .findSimilarPostIds("파란색 축구 저지");
+
+        assertThat(ids).containsExactly(2L, 3L);
+        ArgumentCaptor<SearchRequest> request = ArgumentCaptor.forClass(SearchRequest.class);
+        verify(vectorStore).similaritySearch(request.capture());
+        assertThat(request.getValue().getSimilarityThreshold()).isEqualTo(PostSearchService.RERANK_CANDIDATE_THRESHOLD);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<PostSearchReranker.Candidate>> candidates = ArgumentCaptor.forClass(List.class);
+        verify(reranker).rerank(anyString(), candidates.capture());
+        assertThat(candidates.getValue()).extracting(PostSearchReranker.Candidate::postId).containsExactly(3L, 1L, 2L);
+    }
+
+    @Test
+    void findSimilarPostIds_재정렬은_상위_후보만_보냄() {
+        VectorStore vectorStore = mock(VectorStore.class);
+        List<Document> results = java.util.stream.LongStream.rangeClosed(1, PostSearchService.RERANK_CANDIDATES + 5)
+                .mapToObj(id -> result(id, 0.5)).toList();
+        when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(results);
+        PostSearchReranker reranker = mock(PostSearchReranker.class);
+        when(reranker.rerank(anyString(), anyList())).thenReturn(Optional.of(List.of()));
+
+        new PostSearchService(null, null, provider(vectorStore), MODEL, reranker).findSimilarPostIds("유니폼");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<PostSearchReranker.Candidate>> candidates = ArgumentCaptor.forClass(List.class);
+        verify(reranker).rerank(anyString(), candidates.capture());
+        assertThat(candidates.getValue()).hasSize(PostSearchService.RERANK_CANDIDATES);
+    }
+
+    @Test
+    void findSimilarPostIds_재정렬이_실패하면_운영_기준값으로_거른_유사도_순() {
+        VectorStore vectorStore = mock(VectorStore.class);
+        when(vectorStore.similaritySearch(any(SearchRequest.class)))
+                .thenReturn(List.of(result(3L, 0.40), result(1L, 0.31), result(2L, 0.27)));
+        PostSearchReranker reranker = mock(PostSearchReranker.class);
+        when(reranker.rerank(anyString(), anyList())).thenReturn(Optional.empty());
+
+        List<Long> ids = new PostSearchService(null, null, provider(vectorStore), MODEL, reranker)
+                .findSimilarPostIds("기아");
+
+        // 후보를 넓히려고 낮춘 기준값(0.25) 결과는 재정렬 없이 내보내지 않는다
+        assertThat(ids).containsExactly(3L, 1L);
     }
 }

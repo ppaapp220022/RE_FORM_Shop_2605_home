@@ -30,19 +30,26 @@ public class PostSearchService {
     private final PostImageService postImageService;
     private final ObjectProvider<VectorStore> vectorStoreProvider;
     private final String embeddingModel;
+    private final PostSearchReranker reranker;
 
+    /* reranker가 null이면 재정렬 없이 벡터 결과를 그대로 쓴다 */
     public PostSearchService(PostMapper postMapper, PostImageService postImageService,
                              ObjectProvider<VectorStore> vectorStoreProvider,
-                             @Value("${spring.ai.openai.embedding.options.model:text-embedding-3-small}") String embeddingModel) {
+                             @Value("${spring.ai.openai.embedding.options.model:text-embedding-3-small}") String embeddingModel,
+                             PostSearchReranker reranker) {
         this.postMapper = postMapper;
         this.postImageService = postImageService;
         this.vectorStoreProvider = vectorStoreProvider;
         this.embeddingModel = embeddingModel;
+        this.reranker = reranker;
     }
 
     public static final int SIMILARITY_TOP_K = 100;
     // text-embedding-3-small 기준값. 모델을 바꾸면 유사도 분포가 달라지므로 SemanticSearchEvalTest로 다시 정한다
     public static final double SIMILARITY_THRESHOLD = 0.30;
+    // 재정렬할 때는 관련 없는 글을 모델이 걸러 주므로 기준값을 낮춰 후보를 넓히고, 비용·지연을 위해 상위 몇 건만 보낸다
+    public static final double RERANK_CANDIDATE_THRESHOLD = 0.25;
+    public static final int RERANK_CANDIDATES = 20;
 
     /* 검색어 적용 결과 목록 반환 */
     public PageResponse<PostCardDTO> search(String query, Sport sport, Grade condition,
@@ -104,7 +111,8 @@ public class PostSearchService {
         return new PageResponse<>(content, totalElements, totalPages, safeSize, safePage, first, last);
     }
 
-    /* 벡터 유사도 검색 - 유사도 높은 순 postId 목록 (검색 eval에서도 사용) */
+    /* 벡터 유사도 검색 - 관련도 높은 순 postId 목록 (검색 eval에서도 사용) */
+    //  재정렬이 되면 후보 중 모델이 고른 글만, 안 되면 기준값을 넘는 유사도 순 결과
     public List<Long> findSimilarPostIds(String query) {
         List<Long> postIds = new ArrayList<>();
         if (query == null || query.isBlank()) {
@@ -120,7 +128,7 @@ public class PostSearchService {
                     SearchRequest.builder()
                             .query(query)
                             .topK(SIMILARITY_TOP_K)
-                            .similarityThreshold(SIMILARITY_THRESHOLD)
+                            .similarityThreshold(reranker != null ? RERANK_CANDIDATE_THRESHOLD : SIMILARITY_THRESHOLD)
                             // 다른 모델로 만든 벡터와의 유사도는 의미가 없으므로 현재 모델 벡터만 비교
                             .filterExpression(PostVectorService.modelFilter(embeddingModel))
                             .build());
@@ -134,9 +142,31 @@ public class PostSearchService {
             });
             log.info("AI 검색 결과 {}건, 최고 점수 {} | query={}", postIds.size(),
                     similaritySearch.isEmpty() ? null : similaritySearch.get(0).getScore(), query);
+            if (reranker != null) {
+                return rerank(query, similaritySearch);
+            }
         } catch (Exception exception) {
             log.error("벡터 검색에 실패해 키워드 검색만 수행합니다. query={}", query, exception);
         }
         return postIds;
+    }
+
+    private List<Long> rerank(String query, List<Document> results) {
+        List<PostSearchReranker.Candidate> candidates = results.stream()
+                .filter(result -> result.getMetadata().get("postId") != null)
+                .limit(RERANK_CANDIDATES)
+                .map(result -> new PostSearchReranker.Candidate(
+                        Long.parseLong(result.getMetadata().get("postId").toString()),
+                        String.valueOf(result.getMetadata().getOrDefault("title", "")),
+                        String.valueOf(result.getMetadata().getOrDefault("sport", "")),
+                        String.valueOf(result.getMetadata().getOrDefault("team", ""))))
+                .toList();
+        // 재정렬이 실패하면 운영 기준값으로 거른 유사도 순 결과로 돌아간다
+        return reranker.rerank(query, candidates).orElseGet(() -> results.stream()
+                .filter(result -> result.getScore() != null && result.getScore() >= SIMILARITY_THRESHOLD)
+                .map(result -> result.getMetadata().get("postId"))
+                .filter(Objects::nonNull)
+                .map(postId -> Long.parseLong(postId.toString()))
+                .toList());
     }
 }
