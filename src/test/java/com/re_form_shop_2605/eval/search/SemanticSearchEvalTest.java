@@ -16,18 +16,24 @@ import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.support.StaticListableBeanFactory;
 
+import javax.sql.DataSource;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.UncheckedIOException;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Properties;
 import java.util.function.ToDoubleFunction;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -37,7 +43,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * ─────────────────────────────────────────────────────
  * 설명: 의미 검색(PostSearchService) 품질 eval
  *  - 판매글을 운영과 같은 PostVectorService.savePostVector로 임베딩해 메모리 벡터 저장소(SimpleVectorStore)에 넣고
- *    PostSearchService.findSimilarPostIds로 검색한다. 임베딩 모델·topK·유사도 기준값은 운영 코드 그대로
+ *    PostSearchService.findSimilarPostIds로 검색한다. 임베딩 모델(application.properties)·topK·유사도 기준값은 운영 설정 그대로
  *    (PGVector COSINE_DISTANCE의 score도 1 - 거리 = 코사인 유사도라 기준값 의미가 같다)
  *  - 두 가지 순위를 채점
  *    vector : 벡터 검색 결과만
@@ -74,23 +80,23 @@ class SemanticSearchEvalTest {
 
     @Test
     void semanticSearchQuality() {
-        // 기본은 운영과 같은 기본 임베딩 모델 (application.properties에 모델 지정 없음)
-        String model = System.getProperty("eval.search.embeddingModel");
-        OpenAiEmbeddingModel embeddingModel = model == null
-                ? new OpenAiEmbeddingModel()
-                : new OpenAiEmbeddingModel(OpenAiEmbeddingOptions.builder().model(model).dimensions(PGVECTOR_DIMENSIONS).build());
+        // 기본은 운영 application.properties의 임베딩 모델
+        String model = System.getProperty("eval.search.embeddingModel", productionEmbeddingModel());
+        OpenAiEmbeddingModel embeddingModel = new OpenAiEmbeddingModel(
+                OpenAiEmbeddingOptions.builder().model(model).dimensions(PGVECTOR_DIMENSIONS).build());
         SimpleVectorStore vectorStore = SimpleVectorStore.builder(embeddingModel).build();
         ObjectProvider<VectorStore> provider = new StaticListableBeanFactory(Map.of("vectorStore", vectorStore))
                 .getBeanProvider(VectorStore.class);
 
         List<Post> posts = SearchEvalCase.loadPosts();
-        PostVectorService vectorService = new PostVectorService(provider);
+        PostVectorService vectorService = new PostVectorService(provider,
+                new StaticListableBeanFactory().getBeanProvider(DataSource.class), model);
         posts.forEach(vectorService::savePostVector);
         // savePostVector는 저장 실패를 로그로만 남기므로 실제로 다 들어갔는지 확인한다
         int stored = vectorStore.similaritySearch(SearchRequest.builder().query("유니폼").topK(posts.size()).build()).size();
         assertEquals(posts.size(), stored, "임베딩 저장에 실패한 판매글이 있습니다. 다시 실행해주세요.");
 
-        PostSearchService searchService = new PostSearchService(null, null, provider);
+        PostSearchService searchService = new PostSearchService(null, null, provider, model);
         List<Row> rows = new ArrayList<>();
         // 모델마다 유사도 분포가 달라 운영 기준값(0.7)이 맞지 않을 수 있으므로, 넘겼을 때는 그 기준값으로 자른다
         String thresholdOverride = System.getProperty("eval.search.threshold");
@@ -116,6 +122,25 @@ class SemanticSearchEvalTest {
             assertTrue(recall >= Double.parseDouble(minRecall),
                     "eval.search.minRecallAt10=" + minRecall + " 미달: " + summary);
         }
+    }
+
+    /* 테스트 리소스의 application.properties가 main 것을 가리므로 클래스패스의 파일을 모두 확인한다 */
+    private static String productionEmbeddingModel() {
+        String key = "spring.ai.openai.embedding.options.model";
+        try {
+            for (URL url : Collections.list(SemanticSearchEvalTest.class.getClassLoader().getResources("application.properties"))) {
+                Properties properties = new Properties();
+                try (InputStream in = url.openStream()) {
+                    properties.load(new InputStreamReader(in, StandardCharsets.UTF_8));
+                }
+                if (properties.getProperty(key) != null) {
+                    return properties.getProperty(key);
+                }
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        throw new IllegalStateException("application.properties에 " + key + "이 없습니다.");
     }
 
     /* PostSearchService.search()의 1)~4) 순서를 재현 - 키워드 검색은 PostMapper.findPostsByCondition의 LIKE 조건 (기본 정렬 = 최신순) */

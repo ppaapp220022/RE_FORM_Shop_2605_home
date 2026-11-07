@@ -1,16 +1,21 @@
 package com.re_form_shop_2605.service.trade;
 
 import com.re_form_shop_2605.entity.trade.Post;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.log4j.Log4j2;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import org.springframework.ai.document.Document;
 
+import javax.sql.DataSource;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 /**
  * 작성자: 손민정
  * 작성일: 2026-05-13
@@ -19,38 +24,81 @@ import java.util.Map;
 
 @Log4j2
 @Service
-@RequiredArgsConstructor
 public class PostVectorService {
-    private final ObjectProvider<VectorStore> vectorStoreProvider;
+    private static final String VECTOR_TABLE = "vector_store"; // PgVectorStore 기본 테이블
+    private static final String MODEL_KEY = "embeddingModel";
 
-    /* 판매글 등록 시 벡터 저장 */
+    private final ObjectProvider<VectorStore> vectorStoreProvider;
+    private final ObjectProvider<DataSource> postgresDataSourceProvider;
+    private final String embeddingModel;
+
+    public PostVectorService(ObjectProvider<VectorStore> vectorStoreProvider,
+                             @Qualifier("postgresDataSource") ObjectProvider<DataSource> postgresDataSourceProvider,
+                             @Value("${spring.ai.openai.embedding.options.model:text-embedding-3-small}") String embeddingModel) {
+        this.vectorStoreProvider = vectorStoreProvider;
+        this.postgresDataSourceProvider = postgresDataSourceProvider;
+        this.embeddingModel = embeddingModel;
+    }
+
+    /* 판매글 등록·수정 시 벡터 저장 */
     // 용도 : 게시글 내용 벡터 변환해 PGVector 저장
-    public void savePostVector(Post post) {
+    //  - 문서 id를 postId로 고정해 다시 저장하면 덮어쓴다 (PGVector id 컬럼은 UUID, ON CONFLICT DO UPDATE)
+    //    지우고 다시 넣지 않으므로 임베딩 호출이 실패해도 이전 벡터는 남는다
+    //  - 어떤 모델로 만든 벡터인지 메타데이터에 남겨, 검색은 현재 모델 벡터끼리만 비교한다 (modelFilter)
+    //  - 저장 실패는 판매글 등록을 막지 않도록 로그만 남기고 false 반환
+    public boolean savePostVector(Post post) {
         VectorStore vectorStore = vectorStoreProvider.getIfAvailable();
         if (vectorStore == null) {
             log.warn("벡터 저장소가 비활성화되어 임베딩 저장을 건너뜁니다. postId={}", post.getPostId());
-            return;
+            return false;
         }
 
-        String content = buildContent(post);
-
+        String postId = post.getPostId().toString();
         Document document = new Document(
-                content,
+                documentId(post.getPostId()),
+                buildContent(post),
                 Map.of(
-                        "postId", post.getPostId().toString(),
-                        "title", post.getTitle(),
-                        "sport", post.getSport(),
-                        "team", post.getTeam(),
-                        "price", post.getPrice()
+                        "postId", postId,
+                        "title", nullToEmpty(post.getTitle()),
+                        "sport", post.getSport() != null ? post.getSport().name() : "",
+                        "team", nullToEmpty(post.getTeam()),
+                        "price", post.getPrice(),
+                        MODEL_KEY, embeddingModel
                 )
         );
 
         try {
             vectorStore.add(List.of(document));
             log.info("savePostVector : 벡터 저장소에 저장 완료  |  postId {}", post.getPostId());
+            return true;
         } catch (Exception exception) {
             log.error("savePostVector : 벡터 저장 실패  |  postId {}", post.getPostId(), exception);
+            return false;
         }
+    }
+
+    /* 현재 모델로 만든 벡터만 남기고 나머지 삭제 */
+    // 모델 교체 뒤 재임베딩을 마치고 호출한다. 이전 모델 벡터와 모델 표시가 없는 예전(무작위 id) 벡터를 지운다
+    //  - 메타데이터 필터는 키가 없는 문서를 고를 수 없어 SQL로 직접 지운다
+    public int deleteVectorsOfOtherModels() {
+        DataSource dataSource = postgresDataSourceProvider.getIfAvailable();
+        if (dataSource == null) {
+            return 0;
+        }
+        int deleted = new JdbcTemplate(dataSource).update(
+                "DELETE FROM " + VECTOR_TABLE + " WHERE metadata->>'" + MODEL_KEY + "' IS DISTINCT FROM ?", embeddingModel);
+        log.info("deleteVectorsOfOtherModels : 이전 모델 벡터 {}건 삭제  |  현재 모델 {}", deleted, embeddingModel);
+        return deleted;
+    }
+
+    /* 현재 모델 벡터만 고르는 검색 필터 */
+    public static String modelFilter(String embeddingModel) {
+        return MODEL_KEY + " == '" + embeddingModel + "'";
+    }
+
+    /* postId별 고정 문서 id */
+    static String documentId(Long postId) {
+        return UUID.nameUUIDFromBytes(("post-" + postId).getBytes(StandardCharsets.UTF_8)).toString();
     }
 
     /* 유사 검색 팀명 별칭 지정 */
@@ -95,14 +143,21 @@ public class PostVectorService {
     /* 임베딩할 텍스트 구성 */
     // 내용 구성 : title + sport + team + uniformName + content
     private String buildContent(Post post) {
-        String teamAlias = TEAM_ALIAS.getOrDefault(post.getTeam(), "");
+        // 별칭 표에 없는 팀도 검색되도록 팀명을 같이 넣는다
+        String team = nullToEmpty(post.getTeam());
+        String teamAlias = TEAM_ALIAS.getOrDefault(team, "");
 
         return String.join(" ",
-                post.getTitle(),
-                post.getSport().name(),
+                nullToEmpty(post.getTitle()),
+                post.getSport() != null ? post.getSport().name() : "",
+                team,
                 teamAlias,
-                post.getUniformName(),
-                post.getContent()
-                );
+                nullToEmpty(post.getUniformName()),
+                nullToEmpty(post.getContent())
+                ).trim();
+    }
+
+    private static String nullToEmpty(String value) {
+        return value != null ? value : "";
     }
 }

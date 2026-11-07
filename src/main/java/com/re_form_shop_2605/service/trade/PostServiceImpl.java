@@ -104,6 +104,7 @@ public class PostServiceImpl implements PostService {
         }
 
         applyPostModeration(savedPost);
+        postVectorService.savePostVector(savedPost); // 벡터 저장 (유사 의미 검색용)
 
         return savedPost.getPostId();
     }
@@ -252,6 +253,7 @@ public class PostServiceImpl implements PostService {
         }
 
         applyPostModeration(post);
+        postVectorService.savePostVector(post); // 수정한 내용으로 벡터 덮어쓰기
     }
 
     @Override
