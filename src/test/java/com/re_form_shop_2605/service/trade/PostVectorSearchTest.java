@@ -20,6 +20,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -86,6 +88,34 @@ class PostVectorSearchTest {
         doThrow(new RuntimeException("embedding down")).when(vectorStore).add(anyList());
 
         assertThat(vectorService(vectorStore).savePostVector(post(1L))).isFalse();
+    }
+
+    @Test
+    void savePostVectors_묶음_실패면_글마다_다시_시도해_실패만_센다() {
+        VectorStore vectorStore = mock(VectorStore.class);
+        doAnswer(invocation -> {
+            List<Document> documents = invocation.getArgument(0);
+            if (documents.size() > 1 || documents.get(0).getMetadata().get("postId").equals("2")) {
+                throw new RuntimeException("batch", new IllegalStateException("token limit"));
+            }
+            return null;
+        }).when(vectorStore).add(anyList());
+
+        PostVectorService.BatchResult result = vectorService(vectorStore).savePostVectors(List.of(post(1L), post(2L), post(3L)));
+
+        assertThat(result.saved()).isEqualTo(2);
+        assertThat(result.failed()).isEqualTo(1);
+        assertThat(result.error()).isEqualTo("IllegalStateException: token limit");
+    }
+
+    @Test
+    void savePostVectors_한_번에_저장() {
+        VectorStore vectorStore = mock(VectorStore.class);
+
+        PostVectorService.BatchResult result = vectorService(vectorStore).savePostVectors(List.of(post(1L), post(2L)));
+
+        assertThat(result).isEqualTo(new PostVectorService.BatchResult(2, 0, null));
+        verify(vectorStore).add(argThat(documents -> documents.size() == 2));
     }
 
     @Test

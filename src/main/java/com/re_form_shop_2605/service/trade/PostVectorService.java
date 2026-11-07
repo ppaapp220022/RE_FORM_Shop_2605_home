@@ -2,6 +2,7 @@ package com.re_form_shop_2605.service.trade;
 
 import com.re_form_shop_2605.entity.trade.Post;
 import lombok.extern.log4j.Log4j2;
+import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -53,12 +54,64 @@ public class PostVectorService {
             return false;
         }
 
-        String postId = post.getPostId().toString();
-        Document document = new Document(
+        try {
+            vectorStore.add(List.of(toDocument(post)));
+            log.info("savePostVector : 벡터 저장소에 저장 완료  |  postId {}", post.getPostId());
+            return true;
+        } catch (Exception exception) {
+            log.error("savePostVector : 벡터 저장 실패  |  postId {}", post.getPostId(), exception);
+            return false;
+        }
+    }
+
+    /* 여러 판매글을 한 번에 저장 (재임베딩용) */
+    // 임베딩 API를 묶음 단위로 호출해 글마다 호출하는 것보다 빠르다. 묶음 저장이 실패하면 글마다 다시 시도해 실패한 글만 걸러낸다
+    public BatchResult savePostVectors(List<Post> posts) {
+        VectorStore vectorStore = vectorStoreProvider.getIfAvailable();
+        if (vectorStore == null) {
+            return new BatchResult(0, posts.size(), "벡터 저장소가 비활성화되어 있습니다.");
+        }
+        try {
+            vectorStore.add(posts.stream().map(this::toDocument).toList());
+            return new BatchResult(posts.size(), 0, null);
+        } catch (Exception exception) {
+            log.warn("savePostVectors : 묶음 저장 실패, 글마다 다시 시도합니다  |  {}건", posts.size(), exception);
+            int saved = (int) posts.stream().filter(this::savePostVector).count();
+            return new BatchResult(saved, posts.size() - saved, rootMessage(exception));
+        }
+    }
+
+    public record BatchResult(int saved, int failed, String error) {
+    }
+
+    /* 현재 모델 벡터로 실제 검색이 되는지 확인 (재임베딩 뒤 점검용) */
+    // PostSearchService.findSimilarPostIds는 실패를 삼키고 빈 결과를 돌려주므로, 여기서는 예외를 그대로 던진다
+    public int countSearchableVectors(String query, int topK) {
+        VectorStore vectorStore = vectorStoreProvider.getIfAvailable();
+        if (vectorStore == null) {
+            throw new IllegalStateException("벡터 저장소가 비활성화되어 있습니다.");
+        }
+        return vectorStore.similaritySearch(SearchRequest.builder()
+                .query(query)
+                .topK(topK)
+                .filterExpression(modelFilter(embeddingModel))
+                .build()).size();
+    }
+
+    static String rootMessage(Throwable throwable) {
+        Throwable root = throwable;
+        while (root.getCause() != null && root.getCause() != root) {
+            root = root.getCause();
+        }
+        return root.getClass().getSimpleName() + ": " + root.getMessage();
+    }
+
+    private Document toDocument(Post post) {
+        return new Document(
                 documentId(post.getPostId()),
                 buildContent(post),
                 Map.of(
-                        "postId", postId,
+                        "postId", post.getPostId().toString(),
                         "title", nullToEmpty(post.getTitle()),
                         "sport", post.getSport() != null ? post.getSport().name() : "",
                         "team", nullToEmpty(post.getTeam()),
@@ -66,15 +119,6 @@ public class PostVectorService {
                         MODEL_KEY, embeddingModel
                 )
         );
-
-        try {
-            vectorStore.add(List.of(document));
-            log.info("savePostVector : 벡터 저장소에 저장 완료  |  postId {}", post.getPostId());
-            return true;
-        } catch (Exception exception) {
-            log.error("savePostVector : 벡터 저장 실패  |  postId {}", post.getPostId(), exception);
-            return false;
-        }
     }
 
     /* 현재 모델로 만든 벡터만 남기고 나머지 삭제 */
