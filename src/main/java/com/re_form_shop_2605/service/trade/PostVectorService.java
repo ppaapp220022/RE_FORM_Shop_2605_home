@@ -9,8 +9,10 @@ import org.springframework.stereotype.Service;
 
 import org.springframework.ai.document.Document;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 /**
  * 작성자: 손민정
  * 작성일: 2026-05-13
@@ -23,34 +25,45 @@ import java.util.Map;
 public class PostVectorService {
     private final ObjectProvider<VectorStore> vectorStoreProvider;
 
-    /* 판매글 등록 시 벡터 저장 */
+    /* 판매글 등록·수정 시 벡터 저장 */
     // 용도 : 게시글 내용 벡터 변환해 PGVector 저장
-    public void savePostVector(Post post) {
+    //  - 문서 id를 postId로 고정해 다시 저장하면 덮어쓴다 (PGVector id 컬럼은 UUID)
+    //  - 고정 id 이전에 무작위 id로 저장된 벡터가 남아 있을 수 있어, 같은 postId 벡터를 지운 뒤 저장한다
+    //  - 저장 실패는 판매글 등록을 막지 않도록 로그만 남기고 false 반환
+    public boolean savePostVector(Post post) {
         VectorStore vectorStore = vectorStoreProvider.getIfAvailable();
         if (vectorStore == null) {
             log.warn("벡터 저장소가 비활성화되어 임베딩 저장을 건너뜁니다. postId={}", post.getPostId());
-            return;
+            return false;
         }
 
-        String content = buildContent(post);
-
+        String postId = post.getPostId().toString();
         Document document = new Document(
-                content,
+                documentId(post.getPostId()),
+                buildContent(post),
                 Map.of(
-                        "postId", post.getPostId().toString(),
-                        "title", post.getTitle(),
-                        "sport", post.getSport(),
-                        "team", post.getTeam(),
+                        "postId", postId,
+                        "title", nullToEmpty(post.getTitle()),
+                        "sport", post.getSport() != null ? post.getSport().name() : "",
+                        "team", nullToEmpty(post.getTeam()),
                         "price", post.getPrice()
                 )
         );
 
         try {
+            vectorStore.delete("postId == '" + postId + "'");
             vectorStore.add(List.of(document));
             log.info("savePostVector : 벡터 저장소에 저장 완료  |  postId {}", post.getPostId());
+            return true;
         } catch (Exception exception) {
             log.error("savePostVector : 벡터 저장 실패  |  postId {}", post.getPostId(), exception);
+            return false;
         }
+    }
+
+    /* postId별 고정 문서 id */
+    static String documentId(Long postId) {
+        return UUID.nameUUIDFromBytes(("post-" + postId).getBytes(StandardCharsets.UTF_8)).toString();
     }
 
     /* 유사 검색 팀명 별칭 지정 */
@@ -95,14 +108,21 @@ public class PostVectorService {
     /* 임베딩할 텍스트 구성 */
     // 내용 구성 : title + sport + team + uniformName + content
     private String buildContent(Post post) {
-        String teamAlias = TEAM_ALIAS.getOrDefault(post.getTeam(), "");
+        // 별칭 표에 없는 팀도 검색되도록 팀명을 같이 넣는다
+        String team = nullToEmpty(post.getTeam());
+        String teamAlias = TEAM_ALIAS.getOrDefault(team, "");
 
         return String.join(" ",
-                post.getTitle(),
-                post.getSport().name(),
+                nullToEmpty(post.getTitle()),
+                post.getSport() != null ? post.getSport().name() : "",
+                team,
                 teamAlias,
-                post.getUniformName(),
-                post.getContent()
-                );
+                nullToEmpty(post.getUniformName()),
+                nullToEmpty(post.getContent())
+                ).trim();
+    }
+
+    private static String nullToEmpty(String value) {
+        return value != null ? value : "";
     }
 }

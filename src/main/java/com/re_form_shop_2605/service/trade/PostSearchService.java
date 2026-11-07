@@ -32,7 +32,8 @@ public class PostSearchService {
     private final ObjectProvider<VectorStore> vectorStoreProvider;
 
     public static final int SIMILARITY_TOP_K = 100;
-    public static final double SIMILARITY_THRESHOLD = 0.7;
+    // text-embedding-3-small 기준값. 모델을 바꾸면 유사도 분포가 달라지므로 SemanticSearchEvalTest로 다시 정한다
+    public static final double SIMILARITY_THRESHOLD = 0.30;
 
     /* 검색어 적용 결과 목록 반환 */
     public PageResponse<PostCardDTO> search(String query, Sport sport, Grade condition,
@@ -116,10 +117,12 @@ public class PostSearchService {
                 Object postId = result.getMetadata().get("postId");
                 if (postId != null) {
                     Long id = Long.parseLong(postId.toString());
-                    log.info("AI 검색 결과 postId: {}, score: {}", id, result.getScore());
+                    log.debug("AI 검색 결과 postId: {}, score: {}", id, result.getScore());
                     postIds.add(id);
                 }
             });
+            log.info("AI 검색 결과 {}건, 최고 점수 {} | query={}", postIds.size(),
+                    similaritySearch.isEmpty() ? null : similaritySearch.get(0).getScore(), query);
         } catch (Exception exception) {
             log.error("벡터 검색에 실패해 키워드 검색만 수행합니다. query={}", query, exception);
         }
