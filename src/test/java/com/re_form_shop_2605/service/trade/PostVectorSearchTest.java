@@ -20,6 +20,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -86,6 +88,64 @@ class PostVectorSearchTest {
         doThrow(new RuntimeException("embedding down")).when(vectorStore).add(anyList());
 
         assertThat(vectorService(vectorStore).savePostVector(post(1L))).isFalse();
+    }
+
+    @Test
+    void savePostVectors_묶음_실패면_글마다_다시_시도해_실패만_센다() {
+        VectorStore vectorStore = mock(VectorStore.class);
+        doAnswer(invocation -> {
+            List<Document> documents = invocation.getArgument(0);
+            if (documents.size() > 1 || documents.get(0).getMetadata().get("postId").equals("2")) {
+                throw new RuntimeException("batch", new IllegalStateException("token limit"));
+            }
+            return null;
+        }).when(vectorStore).add(anyList());
+
+        PostVectorService.BatchResult result = vectorService(vectorStore).savePostVectors(List.of(post(1L), post(2L), post(3L)));
+
+        assertThat(result.saved()).isEqualTo(2);
+        assertThat(result.failed()).isEqualTo(1);
+        assertThat(result.error()).isEqualTo("IllegalStateException: token limit");
+    }
+
+    @Test
+    void savePostVectors_한_번에_저장() {
+        VectorStore vectorStore = mock(VectorStore.class);
+
+        PostVectorService.BatchResult result = vectorService(vectorStore).savePostVectors(List.of(post(1L), post(2L)));
+
+        assertThat(result).isEqualTo(new PostVectorService.BatchResult(2, 0, null));
+        verify(vectorStore).add(argThat(documents -> documents.size() == 2));
+    }
+
+    @Test
+    void savePostVector_긴_본문은_앞부분만_임베딩() {
+        VectorStore vectorStore = mock(VectorStore.class);
+        Post longPost = Post.builder().postId(9L).title("제목").sport(Sport.SOCCER).team("팀").uniformName("u")
+                .content("가".repeat(PostVectorService.MAX_CONTENT_LENGTH) + "끝부분").price(1).build();
+
+        vectorService(vectorStore).savePostVector(longPost);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<Document>> captor = ArgumentCaptor.forClass(List.class);
+        verify(vectorStore).add(captor.capture());
+        assertThat(captor.getValue().get(0).getText()).doesNotContain("끝부분")
+                .contains("가".repeat(PostVectorService.MAX_CONTENT_LENGTH));
+    }
+
+    @Test
+    void checkSearch_운영_기준값_이상_건수와_최고_점수() {
+        VectorStore vectorStore = mock(VectorStore.class);
+        when(vectorStore.similaritySearch(any(SearchRequest.class)))
+                .thenReturn(List.of(result(1L, 0.45), result(2L, 0.31), result(3L, 0.29)));
+
+        PostVectorService.SearchCheck check = vectorService(vectorStore).checkSearch("유니폼", 5, 0.30);
+
+        assertThat(check).isEqualTo(new PostVectorService.SearchCheck(2, 0.45));
+        ArgumentCaptor<SearchRequest> captor = ArgumentCaptor.forClass(SearchRequest.class);
+        verify(vectorStore).similaritySearch(captor.capture());
+        assertThat(captor.getValue().getFilterExpression())
+                .isEqualTo(new FilterExpressionTextParser().parse(PostVectorService.modelFilter(MODEL)));
     }
 
     @Test
