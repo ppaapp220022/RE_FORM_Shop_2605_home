@@ -29,6 +29,7 @@ public class PostVectorService {
     private static final String VECTOR_TABLE = "vector_store"; // PgVectorStore 기본 테이블
     private static final String MODEL_KEY = "embeddingModel";
     static final int MAX_CONTENT_LENGTH = 1000;
+    static final int MAX_CONSECUTIVE_FAILURES = 3;
 
     private final ObjectProvider<VectorStore> vectorStoreProvider;
     private final ObjectProvider<DataSource> postgresDataSourceProvider;
@@ -54,35 +55,61 @@ public class PostVectorService {
             log.warn("벡터 저장소가 비활성화되어 임베딩 저장을 건너뜁니다. postId={}", post.getPostId());
             return false;
         }
+        return trySave(vectorStore, post) == null;
+    }
 
+    /* 한 건 저장 - 성공이면 null, 실패면 원인 메시지 */
+    private String trySave(VectorStore vectorStore, Post post) {
         try {
             vectorStore.add(List.of(toDocument(post)));
             log.info("savePostVector : 벡터 저장소에 저장 완료  |  postId {}", post.getPostId());
-            return true;
+            return null;
         } catch (Exception exception) {
             log.error("savePostVector : 벡터 저장 실패  |  postId {}", post.getPostId(), exception);
-            return false;
+            return rootMessage(exception);
         }
     }
 
     /* 여러 판매글을 한 번에 저장 (재임베딩용) */
     // 임베딩 API를 묶음 단위로 호출해 글마다 호출하는 것보다 빠르다. 묶음 저장이 실패하면 글마다 다시 시도해 실패한 글만 걸러낸다
+    //  - 글마다 다시 시도해도 같은 원인으로 연달아 실패하면 키 만료·저장소 장애 같은 전체 장애로 보고 나머지는 시도하지 않는다 (aborted)
+    //    원인이 서로 다른 실패는 글 내용 문제로 보고 계속 시도한다 (인접한 문제 글 몇 개 때문에 정상 글을 매번 건너뛰지 않도록)
     public BatchResult savePostVectors(List<Post> posts) {
         VectorStore vectorStore = vectorStoreProvider.getIfAvailable();
         if (vectorStore == null) {
-            return new BatchResult(0, posts.size(), "벡터 저장소가 비활성화되어 있습니다.");
+            return new BatchResult(0, posts.size(), "벡터 저장소가 비활성화되어 있습니다.", true);
         }
         try {
             vectorStore.add(posts.stream().map(this::toDocument).toList());
             return new BatchResult(posts.size(), 0, null);
         } catch (Exception exception) {
             log.warn("savePostVectors : 묶음 저장 실패, 글마다 다시 시도합니다  |  {}건", posts.size(), exception);
-            int saved = (int) posts.stream().filter(this::savePostVector).count();
-            return new BatchResult(saved, posts.size() - saved, rootMessage(exception));
+            int saved = 0, sameErrorStreak = 0;
+            String lastError = null;
+            for (Post post : posts) {
+                String error = trySave(vectorStore, post);
+                if (error == null) {
+                    saved++;
+                    sameErrorStreak = 0;
+                    continue;
+                }
+                sameErrorStreak = error.equals(lastError) ? sameErrorStreak + 1 : 1;
+                lastError = error;
+                if (sameErrorStreak >= MAX_CONSECUTIVE_FAILURES) {
+                    log.error("savePostVectors : 글마다 다시 시도해도 같은 원인으로 {}건 연속 실패해 나머지를 건너뜁니다  |  {}",
+                            sameErrorStreak, error);
+                    return new BatchResult(saved, posts.size() - saved, error, true);
+                }
+            }
+            return new BatchResult(saved, posts.size() - saved, lastError != null ? lastError : rootMessage(exception));
         }
     }
 
-    public record BatchResult(int saved, int failed, String error) {
+    /* aborted: 전체 장애로 보고 묶음 도중에 멈췄는지 (재임베딩 작업은 이것이 연달아 나와야 중단한다) */
+    public record BatchResult(int saved, int failed, String error, boolean aborted) {
+        public BatchResult(int saved, int failed, String error) {
+            this(saved, failed, error, false);
+        }
     }
 
     /* 현재 모델 벡터로 실제 검색이 되는지 확인 (재임베딩 뒤 점검용) */

@@ -31,16 +31,21 @@ import java.util.concurrent.atomic.AtomicReference;
 public class PostReembedJob {
 
     static final int BATCH_SIZE = 100;
+    static final int MAX_CONSECUTIVE_FAILED_BATCHES = 3;
     private static final String SEARCH_CHECK_QUERY = "유니폼";
 
     public enum State { IDLE, RUNNING, DONE, FAILED }
 
     /* cleanup: 이전 모델 벡터 삭제 결과나 건너뛴 이유
-       searchCheck: 끝난 뒤 운영 기준값을 넘는 검색 결과 수(최대 5)와 최고 점수, 또는 오류 메시지 */
+       searchCheck: 끝난 뒤 운영 기준값을 넘는 검색 결과 수(최대 5)와 최고 점수, 또는 오류 메시지
+       note: 상태 자체에 대한 안내. 상태는 메모리에만 있어 서버가 재시작되면 IDLE로 돌아가므로, IDLE이면 그 사실을 알린다
+             (재시작 전에 끝났는지는 여기서 알 수 없어 다시 실행하라고 하지 않는다 - 판단은 검색 결과·로그로) */
     public record Status(State state, long total, int processed, int embedded, int failed, String cleanup,
-                         String searchCheck, String lastError, LocalDateTime startedAt, LocalDateTime finishedAt) {
+                         String searchCheck, String lastError, LocalDateTime startedAt, LocalDateTime finishedAt,
+                         String note) {
 
-        static final Status IDLE = new Status(State.IDLE, 0, 0, 0, 0, null, null, null, null, null);
+        static final Status IDLE = new Status(State.IDLE, 0, 0, 0, 0, null, null, null, null, null,
+                "이 서버가 시작된 뒤 실행한 재임베딩이 없습니다 (기록은 메모리에만 있어 재시작하면 사라집니다)");
     }
 
     private final PostRepository postRepository;
@@ -68,7 +73,7 @@ public class PostReembedJob {
             return false;
         }
         Status running = new Status(State.RUNNING, postRepository.count(), 0, 0, 0, null, null, null,
-                LocalDateTime.now(), null);
+                LocalDateTime.now(), null, null);
         if (!status.compareAndSet(current, running)) {
             return false;
         }
@@ -77,7 +82,7 @@ public class PostReembedJob {
         } catch (RejectedExecutionException exception) {
             // 종료 중이라 실행기가 닫혔으면 RUNNING에 멈추지 않도록 되돌린다
             status.set(new Status(State.FAILED, running.total(), 0, 0, 0, null, null,
-                    PostVectorService.rootMessage(exception), running.startedAt(), LocalDateTime.now()));
+                    PostVectorService.rootMessage(exception), running.startedAt(), LocalDateTime.now(), null));
             return false;
         }
         return true;
@@ -85,15 +90,21 @@ public class PostReembedJob {
 
     void run() {
         try {
-            int page = 0;
+            int page = 0, consecutiveFailedBatches = 0;
             while (true) {
                 List<Post> batch = postRepository.findAll(PageRequest.of(page++, BATCH_SIZE, Sort.by("postId"))).getContent();
                 if (batch.isEmpty()) break;
                 PostVectorService.BatchResult result = postVectorService.savePostVectors(batch);
+                // 묶음이 연달아 전체 장애로 멈추면 작업도 멈춘다 (계속 돌면 실패 호출과 로그만 쌓인다)
+                //  글 내용 문제로 실패한 묶음은 세지 않는다
+                consecutiveFailedBatches = result.aborted() ? consecutiveFailedBatches + 1 : 0;
                 status.updateAndGet(s -> new Status(s.state(), s.total(), s.processed() + batch.size(),
                         s.embedded() + result.saved(), s.failed() + result.failed(), null, null,
-                        result.error() != null ? result.error() : s.lastError(), s.startedAt(), null));
+                        result.error() != null ? result.error() : s.lastError(), s.startedAt(), null, null));
                 log.info("재임베딩 진행 {} / {} (실패 {})", status.get().processed(), status.get().total(), status.get().failed());
+                if (consecutiveFailedBatches >= MAX_CONSECUTIVE_FAILED_BATCHES) {
+                    throw new IllegalStateException(consecutiveFailedBatches + "묶음 연속 전체 장애로 중단 - " + result.error());
+                }
             }
 
             Status progress = status.get();
@@ -117,13 +128,13 @@ public class PostReembedJob {
             }
             String checked = searchCheck;
             status.updateAndGet(s -> new Status(State.DONE, s.total(), s.processed(), s.embedded(), s.failed(), cleanup,
-                    checked, s.lastError(), s.startedAt(), LocalDateTime.now()));
+                    checked, s.lastError(), s.startedAt(), LocalDateTime.now(), null));
             log.info("재임베딩 완료 {}", status.get());
         } catch (Exception exception) {
             log.error("재임베딩 중단", exception);
             status.updateAndGet(s -> new Status(State.FAILED, s.total(), s.processed(), s.embedded(), s.failed(),
                     s.cleanup(), s.searchCheck(), PostVectorService.rootMessage(exception), s.startedAt(),
-                    LocalDateTime.now()));
+                    LocalDateTime.now(), null));
         }
     }
 

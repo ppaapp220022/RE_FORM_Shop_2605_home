@@ -25,6 +25,7 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -106,6 +107,63 @@ class PostVectorSearchTest {
         assertThat(result.saved()).isEqualTo(2);
         assertThat(result.failed()).isEqualTo(1);
         assertThat(result.error()).isEqualTo("IllegalStateException: token limit");
+    }
+
+    @Test
+    void savePostVectors_같은_원인으로_연달아_실패하면_나머지는_건너뜀() {
+        VectorStore vectorStore = mock(VectorStore.class);
+        doThrow(new RuntimeException("down", new IllegalStateException("invalid key"))).when(vectorStore).add(anyList());
+
+        PostVectorService.BatchResult result = vectorService(vectorStore)
+                .savePostVectors(List.of(post(1L), post(2L), post(3L), post(4L), post(5L)));
+
+        assertThat(result.saved()).isZero();
+        assertThat(result.failed()).isEqualTo(5);
+        assertThat(result.aborted()).isTrue();
+        // 묶음 1번 + 글마다 3번까지만 시도
+        verify(vectorStore, times(1 + PostVectorService.MAX_CONSECUTIVE_FAILURES)).add(anyList());
+    }
+
+    @Test
+    void savePostVectors_원인이_다른_연속_실패는_글_내용_문제로_보고_계속_시도() {
+        VectorStore vectorStore = mock(VectorStore.class);
+        doAnswer(invocation -> {
+            List<Document> documents = invocation.getArgument(0);
+            String postId = (String) documents.get(0).getMetadata().get("postId");
+            if (documents.size() > 1 || !postId.equals("5")) {
+                throw new IllegalArgumentException("bad post " + postId);
+            }
+            return null;
+        }).when(vectorStore).add(anyList());
+
+        PostVectorService.BatchResult result = vectorService(vectorStore)
+                .savePostVectors(List.of(post(1L), post(2L), post(3L), post(4L), post(5L)));
+
+        assertThat(result.saved()).isEqualTo(1);
+        assertThat(result.failed()).isEqualTo(4);
+        assertThat(result.aborted()).isFalse();
+        verify(vectorStore, times(1 + 5)).add(anyList());
+    }
+
+    @Test
+    void savePostVectors_성공이_끼면_연속_실패를_처음부터_센다() {
+        VectorStore vectorStore = mock(VectorStore.class);
+        doAnswer(invocation -> {
+            List<Document> documents = invocation.getArgument(0);
+            // 실패·실패·성공·실패·실패·성공 - 같은 원인이지만 3건 연속은 없다
+            if (documents.size() > 1 || !List.of("3", "6").contains(documents.get(0).getMetadata().get("postId"))) {
+                throw new IllegalStateException("rate limit");
+            }
+            return null;
+        }).when(vectorStore).add(anyList());
+
+        PostVectorService.BatchResult result = vectorService(vectorStore)
+                .savePostVectors(List.of(post(1L), post(2L), post(3L), post(4L), post(5L), post(6L)));
+
+        assertThat(result.saved()).isEqualTo(2);
+        assertThat(result.failed()).isEqualTo(4);
+        assertThat(result.aborted()).isFalse();
+        verify(vectorStore, times(1 + 6)).add(anyList());
     }
 
     @Test
