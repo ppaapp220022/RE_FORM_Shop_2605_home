@@ -16,6 +16,7 @@ import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.support.StaticListableBeanFactory;
 
+import javax.sql.DataSource;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -88,13 +89,14 @@ class SemanticSearchEvalTest {
                 .getBeanProvider(VectorStore.class);
 
         List<Post> posts = SearchEvalCase.loadPosts();
-        PostVectorService vectorService = new PostVectorService(provider);
+        PostVectorService vectorService = new PostVectorService(provider,
+                new StaticListableBeanFactory().getBeanProvider(DataSource.class), model);
         posts.forEach(vectorService::savePostVector);
         // savePostVector는 저장 실패를 로그로만 남기므로 실제로 다 들어갔는지 확인한다
         int stored = vectorStore.similaritySearch(SearchRequest.builder().query("유니폼").topK(posts.size()).build()).size();
         assertEquals(posts.size(), stored, "임베딩 저장에 실패한 판매글이 있습니다. 다시 실행해주세요.");
 
-        PostSearchService searchService = new PostSearchService(null, null, provider);
+        PostSearchService searchService = new PostSearchService(null, null, provider, model);
         List<Row> rows = new ArrayList<>();
         // 모델마다 유사도 분포가 달라 운영 기준값(0.7)이 맞지 않을 수 있으므로, 넘겼을 때는 그 기준값으로 자른다
         String thresholdOverride = System.getProperty("eval.search.threshold");

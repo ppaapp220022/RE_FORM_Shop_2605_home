@@ -8,12 +8,12 @@ import com.re_form_shop_2605.entity.Enum.DeliveryType;
 import com.re_form_shop_2605.entity.Enum.Grade;
 import com.re_form_shop_2605.entity.Enum.Sport;
 import com.re_form_shop_2605.mapper.trade.PostMapper;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.log4j.Log4j2;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
@@ -25,11 +25,20 @@ import java.util.*;
 
 @Log4j2
 @Service
-@RequiredArgsConstructor
 public class PostSearchService {
     private final PostMapper postMapper;
     private final PostImageService postImageService;
     private final ObjectProvider<VectorStore> vectorStoreProvider;
+    private final String embeddingModel;
+
+    public PostSearchService(PostMapper postMapper, PostImageService postImageService,
+                             ObjectProvider<VectorStore> vectorStoreProvider,
+                             @Value("${spring.ai.openai.embedding.options.model:text-embedding-3-small}") String embeddingModel) {
+        this.postMapper = postMapper;
+        this.postImageService = postImageService;
+        this.vectorStoreProvider = vectorStoreProvider;
+        this.embeddingModel = embeddingModel;
+    }
 
     public static final int SIMILARITY_TOP_K = 100;
     // text-embedding-3-small 기준값. 모델을 바꾸면 유사도 분포가 달라지므로 SemanticSearchEvalTest로 다시 정한다
@@ -112,6 +121,8 @@ public class PostSearchService {
                             .query(query)
                             .topK(SIMILARITY_TOP_K)
                             .similarityThreshold(SIMILARITY_THRESHOLD)
+                            // 다른 모델로 만든 벡터와의 유사도는 의미가 없으므로 현재 모델 벡터만 비교
+                            .filterExpression(PostVectorService.modelFilter(embeddingModel))
                             .build());
             similaritySearch.forEach(result -> {
                 Object postId = result.getMetadata().get("postId");
