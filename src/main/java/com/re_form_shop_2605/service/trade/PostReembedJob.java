@@ -10,8 +10,10 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -19,7 +21,8 @@ import java.util.concurrent.atomic.AtomicReference;
  * 설명: 전체 판매글 재임베딩을 백그라운드에서 실행하고 진행 상황을 보관
  *  - 판매글이 수천 건이면 HTTP 요청 안에서 끝나지 않아 프록시가 504로 끊으므로, 요청은 시작만 하고 바로 응답한다
  *  - 한 번에 하나만 실행 (실행 중에 다시 요청하면 거절)
- *  - 끝나면 이전 모델 벡터를 지우고, 현재 모델 벡터로 실제 검색이 되는지 확인해 결과를 남긴다
+ *  - 실패 없이 끝났을 때만 이전 모델 벡터를 지운다 (실패가 있으면 이전 모델로 롤백할 수 있게 남겨 둔다)
+ *  - 끝나면 운영 기준값으로 실제 검색이 되는지 확인해 결과를 남긴다
  *    (검색 실패는 PostSearchService가 빈 결과로 삼키므로 여기서 확인해야 원인이 보인다)
  * ─────────────────────────────────────────────────────
  */
@@ -32,8 +35,9 @@ public class PostReembedJob {
 
     public enum State { IDLE, RUNNING, DONE, FAILED }
 
-    /* searchCheck: 끝난 뒤 현재 모델 벡터 검색 결과 수 (최대 5) 또는 오류 메시지 */
-    public record Status(State state, long total, int processed, int embedded, int failed, Integer deletedOldVectors,
+    /* cleanup: 이전 모델 벡터 삭제 결과나 건너뛴 이유
+       searchCheck: 끝난 뒤 운영 기준값을 넘는 검색 결과 수(최대 5)와 최고 점수, 또는 오류 메시지 */
+    public record Status(State state, long total, int processed, int embedded, int failed, String cleanup,
                          String searchCheck, String lastError, LocalDateTime startedAt, LocalDateTime finishedAt) {
 
         static final Status IDLE = new Status(State.IDLE, 0, 0, 0, 0, null, null, null, null, null);
@@ -68,7 +72,14 @@ public class PostReembedJob {
         if (!status.compareAndSet(current, running)) {
             return false;
         }
-        executor.submit(this::run);
+        try {
+            executor.submit(this::run);
+        } catch (RejectedExecutionException exception) {
+            // 종료 중이라 실행기가 닫혔으면 RUNNING에 멈추지 않도록 되돌린다
+            status.set(new Status(State.FAILED, running.total(), 0, 0, 0, null, null,
+                    PostVectorService.rootMessage(exception), running.startedAt(), LocalDateTime.now()));
+            return false;
+        }
         return true;
     }
 
@@ -85,23 +96,33 @@ public class PostReembedJob {
                 log.info("재임베딩 진행 {} / {} (실패 {})", status.get().processed(), status.get().total(), status.get().failed());
             }
 
-            // 검색은 원래 현재 모델 벡터만 보므로 실패한 글이 있어도 지워도 된다 (다시 실행하면 채워짐)
-            int deleted = postVectorService.deleteVectorsOfOtherModels();
+            Status progress = status.get();
+            String cleanup;
+            if (progress.failed() == 0 && progress.embedded() > 0) {
+                cleanup = "이전 모델 벡터 " + postVectorService.deleteVectorsOfOtherModels() + "건 삭제";
+            } else {
+                // 실패가 있으면 이전 모델 벡터를 남겨 롤백할 수 있게 한다 (검색은 현재 모델 벡터만 보므로 남아도 섞이지 않음)
+                cleanup = "건너뜀 - 실패 " + progress.failed() + "건, 성공 " + progress.embedded() + "건. 다시 실행해 실패 없이 끝나면 삭제";
+            }
             String searchCheck;
             try {
-                searchCheck = postVectorService.countSearchableVectors(SEARCH_CHECK_QUERY, 5) + "건";
+                PostVectorService.SearchCheck check = postVectorService.checkSearch(
+                        SEARCH_CHECK_QUERY, 5, PostSearchService.SIMILARITY_THRESHOLD);
+                searchCheck = String.format(Locale.ROOT, "기준값 %.2f 이상 %d건 (최고 점수 %s)",
+                        PostSearchService.SIMILARITY_THRESHOLD, check.matched(),
+                        check.topScore() == null ? "-" : String.format(Locale.ROOT, "%.3f", check.topScore()));
             } catch (Exception exception) {
                 log.error("재임베딩 뒤 검색 확인 실패", exception);
                 searchCheck = "실패 - " + PostVectorService.rootMessage(exception);
             }
-            String check = searchCheck;
-            status.updateAndGet(s -> new Status(State.DONE, s.total(), s.processed(), s.embedded(), s.failed(), deleted,
-                    check, s.lastError(), s.startedAt(), LocalDateTime.now()));
+            String checked = searchCheck;
+            status.updateAndGet(s -> new Status(State.DONE, s.total(), s.processed(), s.embedded(), s.failed(), cleanup,
+                    checked, s.lastError(), s.startedAt(), LocalDateTime.now()));
             log.info("재임베딩 완료 {}", status.get());
         } catch (Exception exception) {
             log.error("재임베딩 중단", exception);
             status.updateAndGet(s -> new Status(State.FAILED, s.total(), s.processed(), s.embedded(), s.failed(),
-                    s.deletedOldVectors(), s.searchCheck(), PostVectorService.rootMessage(exception), s.startedAt(),
+                    s.cleanup(), s.searchCheck(), PostVectorService.rootMessage(exception), s.startedAt(),
                     LocalDateTime.now()));
         }
     }

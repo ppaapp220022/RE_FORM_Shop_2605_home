@@ -28,6 +28,7 @@ import java.util.UUID;
 public class PostVectorService {
     private static final String VECTOR_TABLE = "vector_store"; // PgVectorStore 기본 테이블
     private static final String MODEL_KEY = "embeddingModel";
+    static final int MAX_CONTENT_LENGTH = 1000;
 
     private final ObjectProvider<VectorStore> vectorStoreProvider;
     private final ObjectProvider<DataSource> postgresDataSourceProvider;
@@ -86,16 +87,23 @@ public class PostVectorService {
 
     /* 현재 모델 벡터로 실제 검색이 되는지 확인 (재임베딩 뒤 점검용) */
     // PostSearchService.findSimilarPostIds는 실패를 삼키고 빈 결과를 돌려주므로, 여기서는 예외를 그대로 던진다
-    public int countSearchableVectors(String query, int topK) {
+    // 운영 검색과 같은 기준값을 넘는 건수와 최고 점수를 함께 돌려줘, 저장은 됐지만 점수가 낮아 안 나오는 경우도 보이게 한다
+    public SearchCheck checkSearch(String query, int topK, double threshold) {
         VectorStore vectorStore = vectorStoreProvider.getIfAvailable();
         if (vectorStore == null) {
             throw new IllegalStateException("벡터 저장소가 비활성화되어 있습니다.");
         }
-        return vectorStore.similaritySearch(SearchRequest.builder()
+        List<Document> results = vectorStore.similaritySearch(SearchRequest.builder()
                 .query(query)
                 .topK(topK)
                 .filterExpression(modelFilter(embeddingModel))
-                .build()).size();
+                .build());
+        int matched = (int) results.stream().filter(d -> d.getScore() != null && d.getScore() >= threshold).count();
+        Double topScore = results.isEmpty() ? null : results.get(0).getScore();
+        return new SearchCheck(matched, topScore);
+    }
+
+    public record SearchCheck(int matched, Double topScore) {
     }
 
     static String rootMessage(Throwable throwable) {
@@ -197,8 +205,13 @@ public class PostVectorService {
                 team,
                 teamAlias,
                 nullToEmpty(post.getUniformName()),
-                nullToEmpty(post.getContent())
+                truncate(nullToEmpty(post.getContent()), MAX_CONTENT_LENGTH)
                 ).trim();
+    }
+
+    // 아주 긴 본문은 임베딩 모델 입력 한도(8191토큰)를 넘어 묶음 저장까지 실패시키므로 앞부분만 쓴다
+    private static String truncate(String value, int maxLength) {
+        return value.length() <= maxLength ? value : value.substring(0, maxLength);
     }
 
     private static String nullToEmpty(String value) {

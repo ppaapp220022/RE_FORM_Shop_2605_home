@@ -15,10 +15,13 @@ import java.util.stream.LongStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -49,13 +52,14 @@ class PostReembedJobTest {
     }
 
     @Test
-    void run_묶음별로_저장하고_이전_모델_벡터_삭제와_검색_확인까지_기록() {
+    void run_실패_없이_끝나면_이전_모델_벡터를_지우고_기준값_검색_결과를_기록() {
         PostVectorService vectorService = mock(PostVectorService.class);
         when(vectorService.savePostVectors(anyList()))
                 .thenReturn(new PostVectorService.BatchResult(100, 0, null))
-                .thenReturn(new PostVectorService.BatchResult(48, 2, "RateLimitException: slow down"));
+                .thenReturn(new PostVectorService.BatchResult(50, 0, null));
         when(vectorService.deleteVectorsOfOtherModels()).thenReturn(30);
-        when(vectorService.countSearchableVectors(anyString(), anyInt())).thenReturn(5);
+        when(vectorService.checkSearch(anyString(), anyInt(), anyDouble()))
+                .thenReturn(new PostVectorService.SearchCheck(4, 0.512));
         PostReembedJob job = new PostReembedJob(repository(List.of(posts(1, 100), posts(101, 150))), vectorService);
 
         assertThat(job.start()).isTrue();
@@ -64,19 +68,51 @@ class PostReembedJobTest {
         assertThat(status.state()).isEqualTo(PostReembedJob.State.DONE);
         assertThat(status.total()).isEqualTo(150);
         assertThat(status.processed()).isEqualTo(150);
-        assertThat(status.embedded()).isEqualTo(148);
-        assertThat(status.failed()).isEqualTo(2);
-        assertThat(status.deletedOldVectors()).isEqualTo(30);
-        assertThat(status.searchCheck()).isEqualTo("5건");
-        assertThat(status.lastError()).contains("RateLimitException");
+        assertThat(status.embedded()).isEqualTo(150);
+        assertThat(status.failed()).isZero();
+        assertThat(status.cleanup()).isEqualTo("이전 모델 벡터 30건 삭제");
+        assertThat(status.searchCheck()).isEqualTo("기준값 0.30 이상 4건 (최고 점수 0.512)");
+        verify(vectorService).checkSearch("유니폼", 5, PostSearchService.SIMILARITY_THRESHOLD);
         assertThat(status.finishedAt()).isNotNull();
+    }
+
+    @Test
+    void run_실패가_있으면_이전_모델_벡터를_남김() {
+        PostVectorService vectorService = mock(PostVectorService.class);
+        when(vectorService.savePostVectors(anyList()))
+                .thenReturn(new PostVectorService.BatchResult(98, 2, "RateLimitException: slow down"));
+        when(vectorService.checkSearch(anyString(), anyInt(), anyDouble()))
+                .thenReturn(new PostVectorService.SearchCheck(0, null));
+        PostReembedJob job = new PostReembedJob(repository(List.of(posts(1, 100))), vectorService);
+
+        job.start();
+        PostReembedJob.Status status = await(job);
+
+        assertThat(status.state()).isEqualTo(PostReembedJob.State.DONE);
+        assertThat(status.failed()).isEqualTo(2);
+        assertThat(status.lastError()).contains("RateLimitException");
+        assertThat(status.cleanup()).startsWith("건너뜀 - 실패 2건");
+        assertThat(status.searchCheck()).isEqualTo("기준값 0.30 이상 0건 (최고 점수 -)");
+        verify(vectorService, never()).deleteVectorsOfOtherModels();
+    }
+
+    @Test
+    void run_하나도_저장하지_못하면_이전_모델_벡터를_남김() {
+        PostVectorService vectorService = mock(PostVectorService.class);
+        PostReembedJob job = new PostReembedJob(repository(List.of()), vectorService);
+
+        job.start();
+        PostReembedJob.Status status = await(job);
+
+        assertThat(status.cleanup()).startsWith("건너뜀");
+        verify(vectorService, never()).deleteVectorsOfOtherModels();
     }
 
     @Test
     void run_검색_확인이_실패하면_원인을_남김() {
         PostVectorService vectorService = mock(PostVectorService.class);
         when(vectorService.savePostVectors(anyList())).thenReturn(new PostVectorService.BatchResult(3, 0, null));
-        when(vectorService.countSearchableVectors(anyString(), anyInt()))
+        when(vectorService.checkSearch(anyString(), anyInt(), anyDouble()))
                 .thenThrow(new RuntimeException("wrap", new IllegalArgumentException("bad jsonpath")));
         PostReembedJob job = new PostReembedJob(repository(List.of(posts(1, 3))), vectorService);
 
@@ -119,6 +155,16 @@ class PostReembedJobTest {
         // 끝난 뒤에는 다시 시작할 수 있다
         assertThat(job.start()).isTrue();
         await(job);
+    }
+
+    @Test
+    void start_실행기가_닫혔으면_FAILED로_되돌림() {
+        PostReembedJob job = new PostReembedJob(repository(List.of(posts(1, 3))), mock(PostVectorService.class));
+        job.shutdown();
+
+        assertThat(job.start()).isFalse();
+        assertThat(job.status().state()).isEqualTo(PostReembedJob.State.FAILED);
+        assertThat(job.status().lastError()).startsWith("RejectedExecutionException");
     }
 
     private static PostReembedJob.Status await(PostReembedJob job) {

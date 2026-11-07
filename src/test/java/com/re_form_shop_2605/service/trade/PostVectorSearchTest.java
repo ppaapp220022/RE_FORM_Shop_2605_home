@@ -119,6 +119,36 @@ class PostVectorSearchTest {
     }
 
     @Test
+    void savePostVector_긴_본문은_앞부분만_임베딩() {
+        VectorStore vectorStore = mock(VectorStore.class);
+        Post longPost = Post.builder().postId(9L).title("제목").sport(Sport.SOCCER).team("팀").uniformName("u")
+                .content("가".repeat(PostVectorService.MAX_CONTENT_LENGTH) + "끝부분").price(1).build();
+
+        vectorService(vectorStore).savePostVector(longPost);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<Document>> captor = ArgumentCaptor.forClass(List.class);
+        verify(vectorStore).add(captor.capture());
+        assertThat(captor.getValue().get(0).getText()).doesNotContain("끝부분")
+                .contains("가".repeat(PostVectorService.MAX_CONTENT_LENGTH));
+    }
+
+    @Test
+    void checkSearch_운영_기준값_이상_건수와_최고_점수() {
+        VectorStore vectorStore = mock(VectorStore.class);
+        when(vectorStore.similaritySearch(any(SearchRequest.class)))
+                .thenReturn(List.of(result(1L, 0.45), result(2L, 0.31), result(3L, 0.29)));
+
+        PostVectorService.SearchCheck check = vectorService(vectorStore).checkSearch("유니폼", 5, 0.30);
+
+        assertThat(check).isEqualTo(new PostVectorService.SearchCheck(2, 0.45));
+        ArgumentCaptor<SearchRequest> captor = ArgumentCaptor.forClass(SearchRequest.class);
+        verify(vectorStore).similaritySearch(captor.capture());
+        assertThat(captor.getValue().getFilterExpression())
+                .isEqualTo(new FilterExpressionTextParser().parse(PostVectorService.modelFilter(MODEL)));
+    }
+
+    @Test
     void savePostVector_저장소_비활성이면_false() {
         assertThat(vectorService(null).savePostVector(post(1L))).isFalse();
     }
