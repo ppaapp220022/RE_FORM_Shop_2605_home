@@ -8,6 +8,7 @@ import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 
 import java.time.Duration;
 import java.util.List;
@@ -102,5 +103,16 @@ class PostSearchRerankerTest {
                 .startsWith("검색어: 파란색 축구 저지\n")
                 .contains("1. 리버풀 홈 저지 | 종목: SOCCER | 팀: 리버풀\n")
                 .contains("3. 울산 HD 홈 | 종목: SOCCER | 팀: 울산 HD\n");
+    }
+
+    @Test
+    void 스프링이_ChatClient_Builder로_빈을_만듦() {
+        try (AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext()) {
+            context.registerBean(ChatClient.Builder.class, () -> ChatClient.builder(mock(ChatModel.class)));
+            context.register(PostSearchReranker.class);
+            context.refresh();
+
+            assertThat(context.getBean(PostSearchReranker.class)).isNotNull();
+        }
     }
 }

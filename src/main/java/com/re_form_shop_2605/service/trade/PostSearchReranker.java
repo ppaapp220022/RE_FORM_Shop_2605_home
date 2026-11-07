@@ -6,6 +6,7 @@ import jakarta.annotation.PreDestroy;
 import lombok.extern.log4j.Log4j2;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.openai.OpenAiChatOptions;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
@@ -67,6 +68,8 @@ public class PostSearchReranker {
         return thread;
     });
 
+    // 생성자가 둘이라 스프링이 고를 수 있도록 표시한다 (없으면 기본 생성자를 찾다 기동 실패)
+    @Autowired
     public PostSearchReranker(ChatClient.Builder clientBuilder) {
         this(clientBuilder, TIMEOUT);
     }
