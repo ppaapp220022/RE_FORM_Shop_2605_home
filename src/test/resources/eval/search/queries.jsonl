@@ -1,0 +1,32 @@
+{"id":"exact-001","tag":"exact","query":"KIA 타이거즈 유니폼","relevant":[1,2]}
+{"id":"exact-002","tag":"exact","query":"LG 트윈스","relevant":[3,4]}
+{"id":"exact-003","tag":"exact","query":"리버풀 유니폼","relevant":[18]}
+{"id":"alias-001","tag":"alias","query":"기아 유니폼","relevant":[1,2]}
+{"id":"alias-002","tag":"alias","query":"엘지 유니폼","relevant":[3,4]}
+{"id":"alias-003","tag":"alias","query":"맨유 유니폼","relevant":[16]}
+{"id":"alias-004","tag":"alias","query":"젠지 저지","relevant":[36]}
+{"id":"alias-005","tag":"alias","query":"국대 유니폼","relevant":[22,23]}
+{"id":"player-001","tag":"player","query":"손흥민 유니폼","relevant":[13]}
+{"id":"player-002","tag":"player","query":"페이커 저지","relevant":[34]}
+{"id":"player-003","tag":"player","query":"커리 유니폼","relevant":[28]}
+{"id":"player-004","tag":"player","query":"김민재 유니폼","relevant":[21]}
+{"id":"player-005","tag":"player","query":"김연경","relevant":[32]}
+{"id":"player-006","tag":"player","query":"이정후 키움 시절","relevant":[12]}
+{"id":"describe-001","tag":"describe","query":"아이가 입을 야구 유니폼","relevant":[10]}
+{"id":"describe-002","tag":"describe","query":"친필 사인 있는 유니폼","relevant":[9]}
+{"id":"describe-003","tag":"describe","query":"하늘색 축구 유니폼","relevant":[17]}
+{"id":"describe-004","tag":"describe","query":"90년대 농구 레트로 저지","relevant":[27,29]}
+{"id":"describe-005","tag":"describe","query":"2002 한일 월드컵 4강","relevant":[23]}
+{"id":"describe-006","tag":"describe","query":"롤드컵 우승팀 유니폼","relevant":[34,37]}
+{"id":"typo-001","tag":"typo","query":"토트남 유니폼","relevant":[13,14]}
+{"id":"typo-002","tag":"typo","query":"레이커즈 저지","relevant":[26,27]}
+{"id":"typo-003","tag":"typo","query":"바르셀로나 매시","relevant":[19]}
+{"id":"english-001","tag":"english","query":"Lakers jersey","relevant":[26,27]}
+{"id":"english-002","tag":"english","query":"Real Madrid Ronaldo","relevant":[20]}
+{"id":"category-001","tag":"category","query":"배구 유니폼","relevant":[32,33]}
+{"id":"category-002","tag":"category","query":"e스포츠 저지","relevant":[34,35,36,37]}
+{"id":"category-003","tag":"category","query":"K리그 유니폼","relevant":[24,25]}
+{"id":"none-001","tag":"none","query":"아스날 유니폼","relevant":[]}
+{"id":"none-002","tag":"none","query":"골프 셔츠","relevant":[]}
+{"id":"none-003","tag":"none","query":"노트북 팝니다","relevant":[]}
+{"id":"none-004","tag":"none","query":"뉴욕 양키스 저지","relevant":[]}

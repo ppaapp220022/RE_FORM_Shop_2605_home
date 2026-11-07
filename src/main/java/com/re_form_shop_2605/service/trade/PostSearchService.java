@@ -31,6 +31,9 @@ public class PostSearchService {
     private final PostImageService postImageService;
     private final ObjectProvider<VectorStore> vectorStoreProvider;
 
+    public static final int SIMILARITY_TOP_K = 100;
+    public static final double SIMILARITY_THRESHOLD = 0.7;
+
     /* 검색어 적용 결과 목록 반환 */
     public PageResponse<PostCardDTO> search(String query, Sport sport, Grade condition,
                                     DeliveryType tradeType, Integer minPrice, Integer maxPrice,
@@ -40,31 +43,7 @@ public class PostSearchService {
         Set<Long> postIdSet = new LinkedHashSet<>();
 
         // 1) AI 통한 유사 의미 결과 검색
-        if (query != null && !query.isBlank()) {
-            VectorStore vectorStore = vectorStoreProvider.getIfAvailable();
-            if (vectorStore == null) {
-                log.warn("벡터 검색이 비활성화되어 키워드 검색만 수행합니다. query={}", query);
-            } else {
-                try {
-                    List<Document> similaritySearch = vectorStore.similaritySearch(
-                            SearchRequest.builder()
-                                    .query(query)
-                                    .topK(100)
-                                    .similarityThreshold(0.7)
-                                    .build());
-                    similaritySearch.forEach(result -> {
-                        Object postId = result.getMetadata().get("postId");
-                        if (postId != null) {
-                            Long id = Long.parseLong(postId.toString());
-                            log.info("AI 검색 결과 postId: {}, score: {}", id, result.getScore());
-                            postIdSet.add(id);
-                        }
-                    });
-                } catch (Exception exception) {
-                    log.error("벡터 검색에 실패해 키워드 검색만 수행합니다. query={}", query, exception);
-                }
-            }
-        }
+        postIdSet.addAll(findSimilarPostIds(query));
 
         // 2) 키워드 검색
         List<PostCardVO> keywordResults = postMapper.findPostsByCondition(
@@ -113,5 +92,37 @@ public class PostSearchService {
         boolean last = totalPages == 0 || safePage >= totalPages;
 
         return new PageResponse<>(content, totalElements, totalPages, safeSize, safePage, first, last);
+    }
+
+    /* 벡터 유사도 검색 - 유사도 높은 순 postId 목록 (검색 eval에서도 사용) */
+    public List<Long> findSimilarPostIds(String query) {
+        List<Long> postIds = new ArrayList<>();
+        if (query == null || query.isBlank()) {
+            return postIds;
+        }
+        VectorStore vectorStore = vectorStoreProvider.getIfAvailable();
+        if (vectorStore == null) {
+            log.warn("벡터 검색이 비활성화되어 키워드 검색만 수행합니다. query={}", query);
+            return postIds;
+        }
+        try {
+            List<Document> similaritySearch = vectorStore.similaritySearch(
+                    SearchRequest.builder()
+                            .query(query)
+                            .topK(SIMILARITY_TOP_K)
+                            .similarityThreshold(SIMILARITY_THRESHOLD)
+                            .build());
+            similaritySearch.forEach(result -> {
+                Object postId = result.getMetadata().get("postId");
+                if (postId != null) {
+                    Long id = Long.parseLong(postId.toString());
+                    log.info("AI 검색 결과 postId: {}, score: {}", id, result.getScore());
+                    postIds.add(id);
+                }
+            });
+        } catch (Exception exception) {
+            log.error("벡터 검색에 실패해 키워드 검색만 수행합니다. query={}", query, exception);
+        }
+        return postIds;
     }
 }
