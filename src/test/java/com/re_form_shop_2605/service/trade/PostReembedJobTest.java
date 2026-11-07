@@ -160,10 +160,10 @@ class PostReembedJobTest {
     }
 
     @Test
-    void run_묶음이_연달아_통째로_실패하면_중단() {
+    void run_묶음이_연달아_전체_장애로_멈추면_중단() {
         PostVectorService vectorService = mock(PostVectorService.class);
         when(vectorService.savePostVectors(anyList()))
-                .thenReturn(new PostVectorService.BatchResult(0, 100, "AuthenticationException: invalid key"));
+                .thenReturn(new PostVectorService.BatchResult(0, 100, "AuthenticationException: invalid key", true));
         PostReembedJob job = new PostReembedJob(
                 repository(List.of(posts(1, 100), posts(101, 200), posts(201, 300), posts(301, 400))), vectorService);
 
@@ -172,17 +172,36 @@ class PostReembedJobTest {
 
         assertThat(status.state()).isEqualTo(PostReembedJob.State.FAILED);
         assertThat(status.processed()).isEqualTo(300);
-        assertThat(status.lastError()).contains("3묶음 연속 전체 실패").contains("invalid key");
+        assertThat(status.lastError()).contains("3묶음 연속 전체 장애").contains("invalid key");
         verify(vectorService, times(3)).savePostVectors(anyList());
         verify(vectorService, never()).deleteVectorsOfOtherModels();
     }
 
     @Test
-    void status_재시작_뒤에는_다시_실행하라는_안내() {
+    void run_글_내용_문제로_0건인_묶음은_중단_조건에_세지_않음() {
+        PostVectorService vectorService = mock(PostVectorService.class);
+        when(vectorService.savePostVectors(anyList()))
+                .thenReturn(new PostVectorService.BatchResult(0, 100, "BadRequest: invalid input"));
+        when(vectorService.checkSearch(anyString(), anyInt(), anyDouble()))
+                .thenReturn(new PostVectorService.SearchCheck(0, null));
+        PostReembedJob job = new PostReembedJob(
+                repository(List.of(posts(1, 100), posts(101, 200), posts(201, 300), posts(301, 400))), vectorService);
+
+        job.start();
+        PostReembedJob.Status status = await(job);
+
+        assertThat(status.state()).isEqualTo(PostReembedJob.State.DONE);
+        assertThat(status.processed()).isEqualTo(400);
+        verify(vectorService, times(4)).savePostVectors(anyList());
+    }
+
+    @Test
+    void status_재시작_뒤에는_실행_기록이_없다고_안내() {
         PostReembedJob job = new PostReembedJob(repository(List.of()), mock(PostVectorService.class));
 
         assertThat(job.status().state()).isEqualTo(PostReembedJob.State.IDLE);
-        assertThat(job.status().cleanup()).contains("다시 실행");
+        assertThat(job.status().note()).contains("실행한 재임베딩이 없습니다").doesNotContain("다시 실행");
+        assertThat(job.status().cleanup()).isNull();
     }
 
     @Test
