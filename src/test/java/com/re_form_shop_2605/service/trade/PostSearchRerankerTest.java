@@ -9,6 +9,7 @@ import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.chat.prompt.Prompt;
 
+import java.time.Duration;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -53,6 +54,7 @@ class PostSearchRerankerTest {
         assertThat(reranker("관련 있는 글은 2번입니다").rerank("수원", CANDIDATES)).isEmpty();
 
         ChatModel failing = mock(ChatModel.class);
+        when(failing.getDefaultOptions()).thenReturn(ChatOptions.builder().build());
         when(failing.call(any(Prompt.class))).thenThrow(new RuntimeException("timeout"));
         assertThat(new PostSearchReranker(ChatClient.builder(failing)).rerank("수원", CANDIDATES)).isEmpty();
     }
@@ -69,6 +71,29 @@ class PostSearchRerankerTest {
         assertThat(PostSearchReranker.parse("{\"relevant\": [2, 9, 0, 2, 1]}", CANDIDATES)).containsExactly(10L, 30L);
         assertThatThrownBy(() -> PostSearchReranker.parse("{\"ids\": [1]}", CANDIDATES))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void parse_번호가_전부_범위_밖이면_결과_없음이_아니라_실패() {
+        // 번호 대신 postId를 돌려준 경우
+        assertThatThrownBy(() -> PostSearchReranker.parse("{\"relevant\": [770, 660]}", CANDIDATES))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(reranker("{\"relevant\": [770]}").rerank("수원", CANDIDATES)).isEmpty();
+    }
+
+    @Test
+    void rerank_시간_안에_답이_없으면_빈_Optional() {
+        ChatModel slow = mock(ChatModel.class);
+        when(slow.getDefaultOptions()).thenReturn(ChatOptions.builder().build());
+        when(slow.call(any(Prompt.class))).thenAnswer(invocation -> {
+            Thread.sleep(2000);
+            return new ChatResponse(List.of(new Generation(new AssistantMessage("{\"relevant\": [1]}"))));
+        });
+        PostSearchReranker reranker = new PostSearchReranker(ChatClient.builder(slow), Duration.ofMillis(100));
+
+        long started = System.nanoTime();
+        assertThat(reranker.rerank("수원", CANDIDATES)).isEmpty();
+        assertThat(Duration.ofNanos(System.nanoTime() - started)).isLessThan(Duration.ofSeconds(1));
     }
 
     @Test
