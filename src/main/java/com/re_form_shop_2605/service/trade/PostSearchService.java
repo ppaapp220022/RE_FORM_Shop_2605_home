@@ -16,6 +16,7 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.util.*;
 /**
  * 작성자: 손민정
@@ -30,19 +31,29 @@ public class PostSearchService {
     private final PostImageService postImageService;
     private final ObjectProvider<VectorStore> vectorStoreProvider;
     private final String embeddingModel;
+    private final PostSearchReranker reranker;
+    private final RerankCache rerankCache = new RerankCache(System::currentTimeMillis);
 
+    /* reranker가 null이면 재정렬 없이 벡터 결과를 그대로 쓴다 */
     public PostSearchService(PostMapper postMapper, PostImageService postImageService,
                              ObjectProvider<VectorStore> vectorStoreProvider,
-                             @Value("${spring.ai.openai.embedding.options.model:text-embedding-3-small}") String embeddingModel) {
+                             @Value("${spring.ai.openai.embedding.options.model:text-embedding-3-small}") String embeddingModel,
+                             PostSearchReranker reranker) {
         this.postMapper = postMapper;
         this.postImageService = postImageService;
         this.vectorStoreProvider = vectorStoreProvider;
         this.embeddingModel = embeddingModel;
+        this.reranker = reranker;
     }
 
     public static final int SIMILARITY_TOP_K = 100;
     // text-embedding-3-small 기준값. 모델을 바꾸면 유사도 분포가 달라지므로 SemanticSearchEvalTest로 다시 정한다
     public static final double SIMILARITY_THRESHOLD = 0.30;
+    // 재정렬할 때는 관련 없는 글을 모델이 걸러 주므로 기준값을 낮춰 후보를 넓히고, 비용·지연을 위해 상위 몇 건만 보낸다
+    public static final double RERANK_CANDIDATE_THRESHOLD = 0.25;
+    public static final int RERANK_CANDIDATES = 20;
+    static final Duration RERANK_CACHE_TTL = Duration.ofMinutes(10);
+    static final int RERANK_CACHE_SIZE = 500;
 
     /* 검색어 적용 결과 목록 반환 */
     public PageResponse<PostCardDTO> search(String query, Sport sport, Grade condition,
@@ -104,39 +115,120 @@ public class PostSearchService {
         return new PageResponse<>(content, totalElements, totalPages, safeSize, safePage, first, last);
     }
 
-    /* 벡터 유사도 검색 - 유사도 높은 순 postId 목록 (검색 eval에서도 사용) */
+    /* 벡터 유사도 검색 - 관련도 높은 순 postId 목록 (검색 eval에서도 사용) */
+    //  재정렬이 되면 후보 중 모델이 고른 글만, 안 되면 기준값을 넘는 유사도 순 결과
     public List<Long> findSimilarPostIds(String query) {
-        List<Long> postIds = new ArrayList<>();
         if (query == null || query.isBlank()) {
-            return postIds;
+            return new ArrayList<>();
         }
         VectorStore vectorStore = vectorStoreProvider.getIfAvailable();
         if (vectorStore == null) {
             log.warn("벡터 검색이 비활성화되어 키워드 검색만 수행합니다. query={}", query);
-            return postIds;
+            return new ArrayList<>();
+        }
+        // 페이지를 넘길 때마다 재정렬을 다시 하면 모델 출력이 달라져 페이지끼리 어긋나므로, 같은 검색어는 잠시 같은 결과를 쓴다
+        String cacheKey = query.trim();
+        if (reranker != null) {
+            List<Long> cached = rerankCache.get(cacheKey);
+            if (cached != null) {
+                return new ArrayList<>(cached);
+            }
         }
         try {
             List<Document> similaritySearch = vectorStore.similaritySearch(
                     SearchRequest.builder()
                             .query(query)
                             .topK(SIMILARITY_TOP_K)
-                            .similarityThreshold(SIMILARITY_THRESHOLD)
+                            .similarityThreshold(reranker != null ? RERANK_CANDIDATE_THRESHOLD : SIMILARITY_THRESHOLD)
                             // 다른 모델로 만든 벡터와의 유사도는 의미가 없으므로 현재 모델 벡터만 비교
                             .filterExpression(PostVectorService.modelFilter(embeddingModel))
                             .build());
-            similaritySearch.forEach(result -> {
-                Object postId = result.getMetadata().get("postId");
-                if (postId != null) {
-                    Long id = Long.parseLong(postId.toString());
-                    log.debug("AI 검색 결과 postId: {}, score: {}", id, result.getScore());
-                    postIds.add(id);
-                }
-            });
-            log.info("AI 검색 결과 {}건, 최고 점수 {} | query={}", postIds.size(),
-                    similaritySearch.isEmpty() ? null : similaritySearch.get(0).getScore(), query);
+            similaritySearch.forEach(result -> log.debug("AI 검색 결과 postId: {}, score: {}",
+                    result.getMetadata().get("postId"), result.getScore()));
+            log.info("AI 검색 {} {}건, 최고 점수 {} | query={}", reranker != null ? "재정렬 후보" : "결과",
+                    similaritySearch.size(), similaritySearch.isEmpty() ? null : similaritySearch.get(0).getScore(), query);
+            if (reranker == null) {
+                return aboveThreshold(similaritySearch);
+            }
+            Optional<List<Long>> reranked = rerank(query, similaritySearch);
+            // 재정렬이 실패하면 캐시하지 않고 운영 기준값으로 거른 유사도 순 결과로 돌아간다
+            reranked.ifPresent(postIds -> rerankCache.put(cacheKey, postIds));
+            return new ArrayList<>(reranked.orElseGet(() -> aboveThreshold(similaritySearch)));
         } catch (Exception exception) {
             log.error("벡터 검색에 실패해 키워드 검색만 수행합니다. query={}", query, exception);
+            return new ArrayList<>();
         }
-        return postIds;
+    }
+
+    /* 제목·팀이 같은 글은 한 후보로 묶어 보내고, 고른 후보는 묶인 글을 모두 돌려준다 */
+    // 같은 상품을 여러 번 올린 글이 상위 후보 자리를 채워 다른 상품이 재정렬에서 빠지지 않도록 한다
+    private Optional<List<Long>> rerank(String query, List<Document> results) {
+        Map<String, List<Long>> groups = new LinkedHashMap<>();
+        Map<String, Document> representatives = new LinkedHashMap<>();
+        for (Document result : results) {
+            Object postId = result.getMetadata().get("postId");
+            if (postId == null) {
+                continue;
+            }
+            String key = result.getMetadata().getOrDefault("title", "") + "|" + result.getMetadata().getOrDefault("team", "");
+            groups.computeIfAbsent(key, k -> new ArrayList<>()).add(Long.parseLong(postId.toString()));
+            representatives.putIfAbsent(key, result);
+        }
+        Map<Long, List<Long>> membersByRepresentative = new HashMap<>();
+        List<PostSearchReranker.Candidate> candidates = representatives.entrySet().stream()
+                .limit(RERANK_CANDIDATES)
+                .map(entry -> {
+                    List<Long> members = groups.get(entry.getKey());
+                    membersByRepresentative.put(members.get(0), members);
+                    Map<String, Object> metadata = entry.getValue().getMetadata();
+                    return new PostSearchReranker.Candidate(members.get(0),
+                            String.valueOf(metadata.getOrDefault("title", "")),
+                            String.valueOf(metadata.getOrDefault("sport", "")),
+                            String.valueOf(metadata.getOrDefault("team", "")));
+                })
+                .toList();
+        return reranker.rerank(query, candidates).map(chosen -> chosen.stream()
+                .flatMap(representative -> membersByRepresentative.getOrDefault(representative, List.of(representative)).stream())
+                .toList());
+    }
+
+    private static List<Long> aboveThreshold(List<Document> results) {
+        return results.stream()
+                .filter(result -> result.getScore() != null && result.getScore() >= SIMILARITY_THRESHOLD)
+                .map(result -> result.getMetadata().get("postId"))
+                .filter(Objects::nonNull)
+                .map(postId -> Long.parseLong(postId.toString()))
+                .toList();
+    }
+
+    /* 검색어별 재정렬 결과를 잠시 보관 - 오래된 것부터 지우고, RERANK_CACHE_TTL이 지나면 다시 재정렬한다 */
+    static final class RerankCache {
+        private record Entry(List<Long> postIds, long expiresAt) {
+        }
+
+        private final Map<String, Entry> entries = new LinkedHashMap<>(16, 0.75f, true) {
+            @Override
+            protected boolean removeEldestEntry(Map.Entry<String, Entry> eldest) {
+                return size() > RERANK_CACHE_SIZE;
+            }
+        };
+        private final java.util.function.LongSupplier clock;
+
+        RerankCache(java.util.function.LongSupplier clock) {
+            this.clock = clock;
+        }
+
+        synchronized List<Long> get(String query) {
+            Entry entry = entries.get(query);
+            if (entry == null || entry.expiresAt() <= clock.getAsLong()) {
+                entries.remove(query);
+                return null;
+            }
+            return entry.postIds();
+        }
+
+        synchronized void put(String query, List<Long> postIds) {
+            entries.put(query, new Entry(List.copyOf(postIds), clock.getAsLong() + RERANK_CACHE_TTL.toMillis()));
+        }
     }
 }

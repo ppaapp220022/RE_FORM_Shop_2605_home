@@ -1,5 +1,6 @@
 package com.re_form_shop_2605.service.trade;
 
+import com.re_form_shop_2605.entity.Enum.Sport;
 import com.re_form_shop_2605.entity.trade.Post;
 import lombok.extern.log4j.Log4j2;
 import org.springframework.ai.vectorstore.SearchRequest;
@@ -204,7 +205,8 @@ public class PostVectorService {
             Map.entry( "리버풀" , "리버풀 살라"),
             Map.entry( "바이에른 뮌헨" , "바이에른 뮌헨 분데스리가"),
             Map.entry( "대한민국 국가대표" , "국대 태극전사 한국 축구"),
-            Map.entry( "수원 삼성 블루윙즈" , "수원삼성 블루윙즈 수원"),
+            Map.entry( "수원 삼성 블루윙즈" , "수원삼성 블루윙즈 수원 K리그"),
+            Map.entry( "울산 HD" , "울산 현대 울산HD K리그"),
 
             // 농구
             Map.entry( "LA 레이커스" , "레이커스 코비 르브론"),
@@ -216,7 +218,21 @@ public class PostVectorService {
             // e스포츠
             Map.entry( "T1" , "T1 테원 페이커 SKT"),
             Map.entry( "Gen.G" , "젠지 GenG 쵸비"),
-            Map.entry( "DRX", "디알엑스 DRX")
+            Map.entry( "DRX", "디알엑스 DRX"),
+
+            // 배구
+            Map.entry( "흥국생명 핑크스파이더스", "흥국생명 핑크스파이더스 김연경"),
+            Map.entry( "대한항공 점보스", "대한항공 점보스 대한항공")
+    );
+
+    /* 종목 enum 대신 한국어 종목명·리그명을 넣어 "축구 유니폼", "롤 팀"처럼 종목으로 찾는 검색어와 맞게 한다 */
+    private static final Map<Sport, String> SPORT_LABEL = Map.of(
+            Sport.SOCCER, "축구",
+            Sport.BASEBALL, "야구 프로야구 KBO",
+            Sport.BASKETBALL, "농구 NBA KBL",
+            Sport.VOLLEYBALL, "배구 V리그",
+            Sport.ESPORTS, "e스포츠 이스포츠 리그오브레전드 롤 LCK 게임단",
+            Sport.ETC, "기타"
     );
 
     /* 임베딩할 텍스트 구성 */
@@ -228,7 +244,7 @@ public class PostVectorService {
 
         return String.join(" ",
                 nullToEmpty(post.getTitle()),
-                post.getSport() != null ? post.getSport().name() : "",
+                post.getSport() != null ? SPORT_LABEL.get(post.getSport()) : "",
                 team,
                 teamAlias,
                 nullToEmpty(post.getUniformName()),

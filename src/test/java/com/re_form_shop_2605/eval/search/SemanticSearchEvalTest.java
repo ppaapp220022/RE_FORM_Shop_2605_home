@@ -1,6 +1,7 @@
 package com.re_form_shop_2605.eval.search;
 
 import com.re_form_shop_2605.entity.trade.Post;
+import com.re_form_shop_2605.service.trade.PostSearchReranker;
 import com.re_form_shop_2605.service.trade.PostSearchService;
 import com.re_form_shop_2605.service.trade.PostVectorService;
 import lombok.extern.log4j.Log4j2;
@@ -8,6 +9,8 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.ai.document.Document;
+import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiEmbeddingModel;
 import org.springframework.ai.openai.OpenAiEmbeddingOptions;
 import org.springframework.ai.vectorstore.SearchRequest;
@@ -64,6 +67,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class SemanticSearchEvalTest {
 
     private static final double[] THRESHOLDS = {0.0, 0.20, 0.25, 0.26, 0.27, 0.28, 0.29, 0.30, 0.32, 0.35, 0.36, 0.37, 0.38, 0.39, 0.40, 0.45, 0.70, 0.75, 0.78, 0.80, 0.82, 0.84};
+    private static final double[] MARGINS = {0.02, 0.04, 0.06, 0.08, 0.10, 0.15, 1.0};
     private static final int PGVECTOR_DIMENSIONS = 1536;
 
     /* scores: 기준값 없이 받은 전체 순위의 postId → 유사도 (진단용) */
@@ -96,7 +100,10 @@ class SemanticSearchEvalTest {
         int stored = vectorStore.similaritySearch(SearchRequest.builder().query("유니폼").topK(posts.size()).build()).size();
         assertEquals(posts.size(), stored, "임베딩 저장에 실패한 판매글이 있습니다. 다시 실행해주세요.");
 
-        PostSearchService searchService = new PostSearchService(null, null, provider, model);
+        // 운영처럼 채팅 모델로 재정렬한다. -Peval.search.rerank=false면 벡터 결과만 (재정렬 전후 비교용)
+        boolean rerank = Boolean.parseBoolean(System.getProperty("eval.search.rerank", "true"));
+        PostSearchReranker reranker = rerank ? new PostSearchReranker(ChatClient.builder(OpenAiChatModel.builder().build())) : null;
+        PostSearchService searchService = new PostSearchService(null, null, provider, model, reranker);
         List<Row> rows = new ArrayList<>();
         // 모델마다 유사도 분포가 달라 운영 기준값(0.7)이 맞지 않을 수 있으므로, 넘겼을 때는 그 기준값으로 자른다
         String thresholdOverride = System.getProperty("eval.search.threshold");
@@ -111,7 +118,7 @@ class SemanticSearchEvalTest {
             rows.add(new Row(evalCase, vector, hybrid(vector, evalCase.query(), posts), scores));
         }
 
-        String summary = summarize(rows, embeddingModel.getOptions().getModel(), threshold);
+        String summary = summarize(rows, embeddingModel.getOptions().getModel(), reranker != null, threshold);
         Path path = write(rows, posts, summary);
         log.info("[Eval] {}", summary);
         log.info("[Eval] report={}", path);
@@ -187,6 +194,15 @@ class SemanticSearchEvalTest {
         return row.scores().entrySet().stream().filter(e -> e.getValue() >= threshold).map(Map.Entry::getKey).toList();
     }
 
+    private static List<Long> withinMargin(Row row, double margin) {
+        List<Long> above = aboveThreshold(row, PostSearchService.SIMILARITY_THRESHOLD);
+        if (above.isEmpty()) {
+            return above;
+        }
+        double top = row.scores().get(above.get(0));
+        return above.stream().filter(id -> row.scores().get(id) >= top - margin).toList();
+    }
+
     private static List<Row> answerable(List<Row> rows) {
         return rows.stream().filter(r -> r.evalCase().answerable()).toList();
     }
@@ -203,12 +219,12 @@ class SemanticSearchEvalTest {
         return rows.isEmpty() ? 0.0 : (double) rows.stream().filter(Row::passed).count() / rows.size();
     }
 
-    private static String summarize(List<Row> rows, String model, double threshold) {
+    private static String summarize(List<Row> rows, String model, boolean rerank, double threshold) {
         List<Row> answerable = answerable(rows);
         return String.format(Locale.ROOT,
-                "Search eval | model=%s threshold=%.2f queries=%d passRate=%.3f hybrid R@5=%.3f R@10=%.3f MRR=%.3f"
+                "Search eval | model=%s rerank=%s threshold=%.2f queries=%d passRate=%.3f hybrid R@5=%.3f R@10=%.3f MRR=%.3f"
                         + " | vector R@5=%.3f R@10=%.3f MRR=%.3f | noneFalsePositives=%d",
-                model, threshold, rows.size(), passRate(rows),
+                model, rerank, threshold, rows.size(), passRate(rows),
                 mean(answerable, r -> recallAt(r.hybrid(), r.evalCase().relevant(), 5)),
                 mean(answerable, r -> recallAt(r.hybrid(), r.evalCase().relevant(), 10)),
                 mean(answerable, r -> reciprocalRank(r.hybrid(), r.evalCase().relevant())),
@@ -252,6 +268,18 @@ class SemanticSearchEvalTest {
                     mean(answerable, r -> reciprocalRank(aboveThreshold(r, threshold), r.evalCase().relevant())),
                     unanswerable(rows).stream().mapToInt(r -> aboveThreshold(r, threshold).size()).sum(),
                     mean(answerable, r -> aboveThreshold(r, threshold).size())));
+        }
+
+        md.append("\n## 최고 점수 대비 범위별 비교 (vector, 기준값 ").append(PostSearchService.SIMILARITY_THRESHOLD)
+                .append(" 이상 중 최고 점수 - 범위 이상만)\n\n")
+                .append("| 범위 | R@10 | MRR | 오탐 | 평균 결과 수 |\n|---|---|---|---|---|\n");
+        for (double margin : MARGINS) {
+            List<Row> answerable = answerable(rows);
+            md.append(String.format(Locale.ROOT, "| %.2f | %.3f | %.3f | %d | %.1f |\n", margin,
+                    mean(answerable, r -> recallAt(withinMargin(r, margin), r.evalCase().relevant(), 10)),
+                    mean(answerable, r -> reciprocalRank(withinMargin(r, margin), r.evalCase().relevant())),
+                    unanswerable(rows).stream().mapToInt(r -> withinMargin(r, margin).size()).sum(),
+                    mean(answerable, r -> withinMargin(r, margin).size())));
         }
 
         md.append("\n## 실패 검색어\n\n| id | 검색어 | 정답 | 첫 정답 순위 (hybrid / vector) | 정답 최고 유사도 | hybrid 상위 3개 (유사도) |\n|---|---|---|---|---|---|\n");
