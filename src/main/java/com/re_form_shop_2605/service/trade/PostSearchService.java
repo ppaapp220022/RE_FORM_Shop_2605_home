@@ -143,6 +143,7 @@ public class PostSearchService {
         if (reranker != null) {
             List<Long> cached = rerankCache.get(cacheKey);
             if (cached != null) {
+                log.info("AI 검색 재정렬 캐시 사용 {}건", cached.size());
                 return new ArrayList<>(cached);
             }
         }
@@ -151,13 +152,16 @@ public class PostSearchService {
                 List<PostVectorService.CandidateGroup> groups = onSaleOnly(
                         vectorService.findCandidateGroups(query, vectorService.rerankCandidateThreshold(), RERANK_CANDIDATE_GROUPS));
                 // 검색어 원문은 개인정보가 섞일 수 있어 운영 로그(INFO)에는 남기지 않는다
-                log.info("AI 검색 재정렬 후보 {}묶음, 최고 점수 {}", groups.size(), groups.isEmpty() ? null : groups.get(0).score());
+                // 후보 팀·점수는 검색어가 아니라 판매글 정보라 INFO로 남긴다 - 재정렬이 0건일 때 후보 부족인지 모델 판단인지 가린다
+                log.info("AI 검색 재정렬 후보 {}묶음, 최고 점수 {}, 후보 {}", groups.size(),
+                        groups.isEmpty() ? null : groups.get(0).score(), candidateSummary(groups));
                 log.debug("AI 검색 재정렬 후보 query={}", query);
                 groups.forEach(group -> log.debug("AI 검색 재정렬 후보 {} | {} | score {} | {}건",
                         group.team(), group.title(), group.score(), group.postIds().size()));
                 Optional<List<Long>> reranked = rerank(query, groups);
                 // 재정렬이 실패하면 캐시하지 않고 운영 기준값으로 거른 유사도 순 결과로 돌아간다
                 reranked.ifPresent(postIds -> rerankCache.put(cacheKey, postIds));
+                reranked.ifPresent(postIds -> log.info("AI 검색 재정렬 선택 {}", candidateSummary(chosenGroups(groups, postIds))));
                 return new ArrayList<>(reranked.orElseGet(() -> groupsAboveThreshold(groups)));
             }
             List<Document> similaritySearch = vectorStore.similaritySearch(
@@ -193,6 +197,24 @@ public class PostSearchService {
                 .map(group -> group.retain(onSale::contains))
                 .filter(group -> !group.postIds().isEmpty())
                 .limit(RERANK_CANDIDATES)
+                .toList();
+    }
+
+    /* 로그용 후보 요약 - "팀(종목) 점수" 목록 */
+    static String candidateSummary(List<PostVectorService.CandidateGroup> groups) {
+        return groups.stream()
+                .map(group -> String.format(Locale.ROOT, "%s(%s) %.3f", group.team(), group.sport(), group.score()))
+                .toList()
+                .toString();
+    }
+
+    /* 재정렬 결과에 대표 글이 나온 묶음을 모델이 고른 순서대로 */
+    static List<PostVectorService.CandidateGroup> chosenGroups(List<PostVectorService.CandidateGroup> groups, List<Long> postIds) {
+        Map<Long, PostVectorService.CandidateGroup> byRepresentative = new HashMap<>();
+        groups.forEach(group -> byRepresentative.put(group.postIds().get(0), group));
+        return postIds.stream()
+                .map(byRepresentative::get)
+                .filter(Objects::nonNull)
                 .toList();
     }
 
