@@ -22,9 +22,11 @@ class RedisConfigTest {
         assumeTrue(redisAvailable(), "Redis(localhost:6379)에 연결할 수 없어 건너뜁니다.");
         ValueOperations<String,String> valueOperations = redisTemplate.opsForValue();
 
-        String key = "name";
+        String key = "reform:test:redis-config";
         valueOperations.set(key,"test");
         String value = valueOperations.get(key);
+
+        redisTemplate.delete(key);
 
         assertEquals("test", value);
     }
