@@ -4,10 +4,13 @@ WORKDIR /app
 
 COPY gradlew gradlew
 COPY gradle gradle
+# Gradle 배포판 다운로드를 소스와 다른 레이어로 둬, 소스만 바뀐 빌드에서는 캐시된 레이어를 쓴다
+RUN chmod +x gradlew && ./gradlew --version --no-daemon
+
 COPY build.gradle settings.gradle ./
 COPY src src
 
-RUN chmod +x gradlew && ./gradlew bootJar --no-daemon -x test
+RUN ./gradlew bootJar --no-daemon -x test
 
 FROM eclipse-temurin:21-jre
 
