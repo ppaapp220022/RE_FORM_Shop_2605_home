@@ -521,4 +521,15 @@ class PostVectorSearchTest {
         assertThat(PostSearchService.candidateSummary(groups)).isEqualTo("[T1(ESPORTS) 0.373, 젠지(ESPORTS) 0.250]");
         assertThat(PostSearchService.candidateSummary(List.of())).isEqualTo("[]");
     }
+
+    @Test
+    void chosenGroupsFollowRerankedOrder() {
+        PostVectorService.CandidateGroup t1 = new PostVectorService.CandidateGroup("T1 저지", "ESPORTS", "T1", List.of(1L, 2L), List.of(0.37, 0.31));
+        PostVectorService.CandidateGroup gen = new PostVectorService.CandidateGroup("젠지 저지", "ESPORTS", "젠지", List.of(3L, 4L), List.of(0.25, 0.24));
+        PostVectorService.CandidateGroup kia = new PostVectorService.CandidateGroup("KIA 유니폼", "BASEBALL", "KIA", List.of(5L), List.of(0.20));
+
+        // 재정렬 결과는 고른 묶음의 글 전체가 모델 순서대로 펼쳐진 목록
+        assertThat(PostSearchService.chosenGroups(List.of(t1, gen, kia), List.of(3L, 4L, 1L, 2L))).containsExactly(gen, t1);
+        assertThat(PostSearchService.chosenGroups(List.of(t1, gen, kia), List.of())).isEmpty();
+    }
 }
