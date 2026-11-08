@@ -69,7 +69,8 @@ public class PostSearchService {
         Set<Long> postIdSet = new LinkedHashSet<>();
 
         // 1) AI 통한 유사 의미 결과 검색
-        postIdSet.addAll(findSimilarPostIds(query));
+        List<Long> similarIds = findSimilarPostIds(query);
+        postIdSet.addAll(similarIds);
 
         // 2) 키워드 검색
         List<PostCardVO> keywordResults = postMapper.findPostsByCondition(
@@ -86,8 +87,13 @@ public class PostSearchService {
 
         // 4) 화면에 나오는 글(판매중·필터 조건)만 남긴 뒤 페이징 처리
         //    벡터 결과에는 판매 완료 글이나 필터에 안 맞는 글도 섞여 있어, 거르지 않고 자르면 빈 페이지가 생긴다
-        Set<Long> visible = new HashSet<>(postMapper.findVisiblePostIds(
-                new ArrayList<>(postIdSet), sport, condition, tradeType, minPrice, maxPrice));
+        //    키워드 결과는 이미 같은 조건으로 조회했으므로 벡터 결과 중 나머지만 확인한다
+        Set<Long> visible = new HashSet<>();
+        keywordResults.forEach(post -> visible.add(post.getPostId()));
+        List<Long> unchecked = similarIds.stream().filter(id -> !visible.contains(id)).toList();
+        if (!unchecked.isEmpty()) {
+            visible.addAll(postMapper.findVisiblePostIds(unchecked, sport, condition, tradeType, minPrice, maxPrice));
+        }
         List<Long> postIds = postIdSet.stream().filter(visible::contains).toList();
         int totalElements = postIds.size();
         int totalPages = totalElements == 0 ? 0 : (int) Math.ceil((double) totalElements / safeSize);
@@ -184,8 +190,7 @@ public class PostSearchService {
         List<Long> ids = groups.stream().flatMap(group -> group.postIds().stream()).toList();
         Set<Long> onSale = new HashSet<>(postMapper.findVisiblePostIds(ids, null, null, null, null, null));
         return groups.stream()
-                .map(group -> new PostVectorService.CandidateGroup(group.title(), group.sport(), group.team(), group.score(),
-                        group.postIds().stream().filter(onSale::contains).toList()))
+                .map(group -> group.retain(onSale::contains))
                 .filter(group -> !group.postIds().isEmpty())
                 .limit(RERANK_CANDIDATES)
                 .toList();
@@ -205,11 +210,10 @@ public class PostSearchService {
                 .toList());
     }
 
-    /* 재정렬이 실패했을 때 - 묶음 최고 유사도가 운영 기준값 이상인 묶음의 글을 유사도 순으로 */
+    /* 재정렬이 실패했을 때 - 운영 기준값 이상인 글만, 묶음 최고 유사도 순 */
     private static List<Long> groupsAboveThreshold(List<PostVectorService.CandidateGroup> groups) {
         return groups.stream()
-                .filter(group -> group.score() >= SIMILARITY_THRESHOLD)
-                .flatMap(group -> group.postIds().stream())
+                .flatMap(group -> group.postIdsAbove(SIMILARITY_THRESHOLD).stream())
                 .toList();
     }
 

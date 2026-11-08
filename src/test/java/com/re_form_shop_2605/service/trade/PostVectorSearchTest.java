@@ -451,4 +451,24 @@ class PostVectorSearchTest {
         assertThat(page.totalElements()).isEqualTo(2);
         verify(postMapper).findPostsByIds(eq(List.of(11L, 12L)), any(), any(), any(), any(), any(), any());
     }
+
+    @Test
+    void findSimilarPostIds_재정렬이_실패하면_같은_묶음이라도_기준값_미만_글은_뺌() {
+        VectorStore vectorStore = mock(VectorStore.class);
+        when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(List.of(
+                titled(1L, 0.32, "KIA 홈", "KIA"), titled(2L, 0.27, "KIA 홈", "KIA")));
+        PostSearchReranker reranker = mock(PostSearchReranker.class);
+        when(reranker.rerank(anyString(), anyList())).thenReturn(Optional.empty());
+
+        assertThat(rerankingService(vectorStore, reranker).findSimilarPostIds("기아")).containsExactly(1L);
+    }
+
+    @Test
+    void groupDocuments_종목이_다르면_다른_묶음() {
+        Document soccer = titled(1L, 0.4, "서울 홈", "서울");
+        Document basketball = Document.builder().text("t")
+                .metadata(Map.of("postId", "2", "title", "서울 홈", "team", "서울", "sport", "BASKETBALL")).score(0.3).build();
+
+        assertThat(PostVectorService.groupDocuments(List.of(soccer, basketball), 10)).hasSize(2);
+    }
 }

@@ -146,14 +146,44 @@ public class PostVectorService {
     public record SearchCheck(int matched, Double topScore) {
     }
 
-    /* 제목·팀이 같은 글 묶음 - postIds는 유사도 높은 순, score는 묶음에서 가장 높은 유사도 */
-    public record CandidateGroup(String title, String sport, String team, double score, List<Long> postIds) {
+    /* 제목·종목·팀이 같은 글 묶음 - postIds는 유사도 높은 순, scores는 postIds와 같은 순서의 유사도 */
+    public record CandidateGroup(String title, String sport, String team, List<Long> postIds, List<Double> scores) {
+
+        /* 묶음에서 가장 높은 유사도 */
+        public double score() {
+            return scores.get(0);
+        }
+
+        /* 유사도가 threshold 이상인 글만 */
+        public List<Long> postIdsAbove(double threshold) {
+            List<Long> above = new ArrayList<>();
+            for (int i = 0; i < postIds.size(); i++) {
+                if (scores.get(i) >= threshold) {
+                    above.add(postIds.get(i));
+                }
+            }
+            return above;
+        }
+
+        /* 남길 글만 고른 묶음 (유사도 순서 유지) */
+        public CandidateGroup retain(java.util.function.Predicate<Long> keep) {
+            List<Long> keptIds = new ArrayList<>();
+            List<Double> keptScores = new ArrayList<>();
+            for (int i = 0; i < postIds.size(); i++) {
+                if (keep.test(postIds.get(i))) {
+                    keptIds.add(postIds.get(i));
+                    keptScores.add(scores.get(i));
+                }
+            }
+            return new CandidateGroup(title, sport, team, keptIds, keptScores);
+        }
     }
 
-    /* 유사도가 threshold 이상인 글을 제목·팀으로 묶어, 묶음 최고 유사도 순으로 최대 limit개 반환 (재정렬 후보용) */
+    /* 유사도가 threshold 이상인 글을 제목·종목·팀으로 묶어, 묶음 최고 유사도 순으로 최대 limit개 반환 (재정렬 후보용) */
     // 같은 글을 수십~수백 번 올리면 벡터 상위 N건을 한두 묶음이 다 차지해 다른 상품이 후보에서 빠진다
     //  - PG에서는 묶음 집계를 SQL로 한 번에 한다 (전체 스캔이지만 판매글 수천 건 규모에선 수 ms)
-    //  - SQL이 실패하면 예전처럼 상위 FALLBACK_TOP_K건만 받아 Java에서 묶는다
+    //  - SQL 실행이 실패하면 예전처럼 상위 FALLBACK_TOP_K건만 받아 Java에서 묶는다
+    //    (검색어 임베딩 실패는 대체 경로도 같은 호출을 다시 하므로 그대로 던진다)
     //  - PG가 없으면(메모리 저장소) 전부 받아 Java에서 묶는다
     public List<CandidateGroup> findCandidateGroups(String query, double threshold, int limit) {
         VectorStore vectorStore = vectorStoreProvider.getIfAvailable();
@@ -161,35 +191,41 @@ public class PostVectorService {
             throw new IllegalStateException("벡터 저장소가 비활성화되어 있습니다.");
         }
         DataSource dataSource = postgresDataSourceProvider.getIfAvailable();
-        EmbeddingModel model = embeddingModelProvider.getIfAvailable();
-        if (dataSource != null && model != null) {
-            try {
-                return groupsBySql(new JdbcTemplate(dataSource), model.embed(query), threshold, limit);
-            } catch (Exception exception) {
-                log.error("findCandidateGroups : 묶음 집계 SQL 실패, 상위 {}건만 묶습니다  |  query={}", FALLBACK_TOP_K, query, exception);
-                return groupInMemory(vectorStore, query, threshold, limit, FALLBACK_TOP_K);
-            }
+        if (dataSource == null) {
+            return groupInMemory(vectorStore, query, threshold, limit, IN_MEMORY_TOP_K);
         }
-        return groupInMemory(vectorStore, query, threshold, limit, IN_MEMORY_TOP_K);
+        EmbeddingModel model = embeddingModelProvider.getIfUnique();
+        if (model == null) {
+            log.warn("findCandidateGroups : 임베딩 모델을 하나로 고를 수 없어 상위 {}건만 묶습니다  |  query={}", FALLBACK_TOP_K, query);
+            return groupInMemory(vectorStore, query, threshold, limit, FALLBACK_TOP_K);
+        }
+        float[] queryEmbedding = model.embed(query);
+        try {
+            return groupsBySql(new JdbcTemplate(dataSource), queryEmbedding, threshold, limit);
+        } catch (RuntimeException exception) {
+            log.error("findCandidateGroups : 묶음 집계 SQL 실패, 상위 {}건만 묶습니다  |  query={}", FALLBACK_TOP_K, query, exception);
+            return groupInMemory(vectorStore, query, threshold, limit, FALLBACK_TOP_K);
+        }
     }
 
     private List<CandidateGroup> groupsBySql(JdbcTemplate jdbcTemplate, float[] queryEmbedding, double threshold, int limit) {
         PGvector vector = new PGvector(queryEmbedding);
         return jdbcTemplate.query("""
                         SELECT title, sport, team, MIN(distance) AS distance,
-                               string_agg(post_id, ',' ORDER BY distance, post_id) AS post_ids
+                               string_agg(post_id, ',' ORDER BY distance, post_id) AS post_ids,
+                               string_agg((1 - distance)::text, ',' ORDER BY distance, post_id) AS scores
                         FROM (SELECT metadata->>'title' AS title, metadata->>'sport' AS sport, metadata->>'team' AS team,
                                      metadata->>'postId' AS post_id, embedding <=> ? AS distance
                               FROM %s
-                              WHERE metadata->>'%s' = ?) v
+                              WHERE metadata->>'%s' = ? AND metadata->>'postId' IS NOT NULL) v
                         WHERE distance <= ?
                         GROUP BY title, sport, team
                         ORDER BY MIN(distance)
                         LIMIT ?
                         """.formatted(VECTOR_TABLE, MODEL_KEY),
                 (rs, rowNum) -> new CandidateGroup(rs.getString("title"), rs.getString("sport"), rs.getString("team"),
-                        1 - rs.getDouble("distance"),
-                        Arrays.stream(rs.getString("post_ids").split(",")).map(Long::parseLong).toList()),
+                        Arrays.stream(rs.getString("post_ids").split(",")).map(Long::parseLong).toList(),
+                        Arrays.stream(rs.getString("scores").split(",")).map(Double::parseDouble).toList()),
                 vector, embeddingModel, 1 - threshold, limit);
     }
 
@@ -203,25 +239,25 @@ public class PostVectorService {
         return groupDocuments(results, limit);
     }
 
-    /* 유사도 순 결과를 제목·팀으로 묶는다 - 처음 나온 순서(= 묶음 최고 유사도 순)를 유지, postId 없는 결과는 건너뜀 */
+    /* 유사도 순 결과를 SQL과 같은 기준(제목·종목·팀)으로 묶는다 - 처음 나온 순서(= 묶음 최고 유사도 순) 유지, postId 없는 결과는 건너뜀 */
     static List<CandidateGroup> groupDocuments(List<Document> results, int limit) {
         Map<String, List<Document>> groups = new LinkedHashMap<>();
         for (Document result : results) {
-            if (result.getMetadata().get("postId") == null) {
+            Map<String, Object> metadata = result.getMetadata();
+            if (metadata.get("postId") == null) {
                 continue;
             }
-            String key = result.getMetadata().getOrDefault("title", "") + "|" + result.getMetadata().getOrDefault("team", "");
+            String key = metadata.getOrDefault("title", "") + "|" + metadata.getOrDefault("sport", "") + "|" + metadata.getOrDefault("team", "");
             groups.computeIfAbsent(key, k -> new ArrayList<>()).add(result);
         }
         return groups.values().stream().limit(limit).map(members -> {
             Map<String, Object> metadata = members.get(0).getMetadata();
-            Double score = members.get(0).getScore();
             return new CandidateGroup(
                     String.valueOf(metadata.getOrDefault("title", "")),
                     String.valueOf(metadata.getOrDefault("sport", "")),
                     String.valueOf(metadata.getOrDefault("team", "")),
-                    score != null ? score : 0.0,
-                    members.stream().map(d -> Long.parseLong(d.getMetadata().get("postId").toString())).toList());
+                    members.stream().map(d -> Long.parseLong(d.getMetadata().get("postId").toString())).toList(),
+                    members.stream().map(d -> d.getScore() != null ? d.getScore() : 0.0).toList());
         }).toList();
     }
 
