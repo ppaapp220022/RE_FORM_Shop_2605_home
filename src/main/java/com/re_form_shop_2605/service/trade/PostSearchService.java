@@ -50,10 +50,8 @@ public class PostSearchService {
     }
 
     public static final int SIMILARITY_TOP_K = 100;
-    // text-embedding-3-small 기준값. 모델을 바꾸면 유사도 분포가 달라지므로 SemanticSearchEvalTest로 다시 정한다
-    public static final double SIMILARITY_THRESHOLD = 0.30;
-    // 재정렬할 때는 관련 없는 글을 모델이 걸러 주므로 기준값을 낮춰 후보를 넓히고, 비용·지연을 위해 상위 몇 건만 보낸다
-    public static final double RERANK_CANDIDATE_THRESHOLD = 0.25;
+    // 유사도 기준값은 임베딩 모델마다 달라 PostVectorService가 프로퍼티로 갖는다 (app.ai.search.*)
+    // 재정렬은 비용·지연을 위해 상위 몇 묶음만 보낸다
     public static final int RERANK_CANDIDATES = 20;
     // 판매중이 아닌 글만 있는 묶음을 빼고도 RERANK_CANDIDATES개가 남도록 넉넉히 받는다
     static final int RERANK_CANDIDATE_GROUPS = RERANK_CANDIDATES * 3;
@@ -151,9 +149,10 @@ public class PostSearchService {
         try {
             if (reranker != null) {
                 List<PostVectorService.CandidateGroup> groups = onSaleOnly(
-                        vectorService.findCandidateGroups(query, RERANK_CANDIDATE_THRESHOLD, RERANK_CANDIDATE_GROUPS));
-                log.info("AI 검색 재정렬 후보 {}묶음, 최고 점수 {} | query={}",
-                        groups.size(), groups.isEmpty() ? null : groups.get(0).score(), query);
+                        vectorService.findCandidateGroups(query, vectorService.rerankCandidateThreshold(), RERANK_CANDIDATE_GROUPS));
+                // 검색어 원문은 개인정보가 섞일 수 있어 운영 로그(INFO)에는 남기지 않는다
+                log.info("AI 검색 재정렬 후보 {}묶음, 최고 점수 {}", groups.size(), groups.isEmpty() ? null : groups.get(0).score());
+                log.debug("AI 검색 재정렬 후보 query={}", query);
                 groups.forEach(group -> log.debug("AI 검색 재정렬 후보 {} | {} | score {} | {}건",
                         group.team(), group.title(), group.score(), group.postIds().size()));
                 Optional<List<Long>> reranked = rerank(query, groups);
@@ -165,14 +164,15 @@ public class PostSearchService {
                     SearchRequest.builder()
                             .query(query)
                             .topK(SIMILARITY_TOP_K)
-                            .similarityThreshold(SIMILARITY_THRESHOLD)
+                            .similarityThreshold(vectorService.similarityThreshold())
                             // 다른 모델로 만든 벡터와의 유사도는 의미가 없으므로 현재 모델 벡터만 비교
                             .filterExpression(PostVectorService.modelFilter(embeddingModel))
                             .build());
             similaritySearch.forEach(result -> log.debug("AI 검색 결과 postId: {}, score: {}",
                     result.getMetadata().get("postId"), result.getScore()));
-            log.info("AI 검색 결과 {}건, 최고 점수 {} | query={}",
-                    similaritySearch.size(), similaritySearch.isEmpty() ? null : similaritySearch.get(0).getScore(), query);
+            log.info("AI 검색 결과 {}건, 최고 점수 {}",
+                    similaritySearch.size(), similaritySearch.isEmpty() ? null : similaritySearch.get(0).getScore());
+            log.debug("AI 검색 query={}", query);
             return aboveThreshold(similaritySearch);
         } catch (Exception exception) {
             log.error("벡터 검색에 실패해 키워드 검색만 수행합니다. query={}", query, exception);
@@ -211,15 +211,15 @@ public class PostSearchService {
     }
 
     /* 재정렬이 실패했을 때 - 운영 기준값 이상인 글만, 묶음 최고 유사도 순 */
-    private static List<Long> groupsAboveThreshold(List<PostVectorService.CandidateGroup> groups) {
+    private List<Long> groupsAboveThreshold(List<PostVectorService.CandidateGroup> groups) {
         return groups.stream()
-                .flatMap(group -> group.postIdsAbove(SIMILARITY_THRESHOLD).stream())
+                .flatMap(group -> group.postIdsAbove(vectorService.similarityThreshold()).stream())
                 .toList();
     }
 
-    private static List<Long> aboveThreshold(List<Document> results) {
+    private List<Long> aboveThreshold(List<Document> results) {
         return results.stream()
-                .filter(result -> result.getScore() != null && result.getScore() >= SIMILARITY_THRESHOLD)
+                .filter(result -> result.getScore() != null && result.getScore() >= vectorService.similarityThreshold())
                 .map(result -> result.getMetadata().get("postId"))
                 .filter(Objects::nonNull)
                 .map(postId -> Long.parseLong(postId.toString()))

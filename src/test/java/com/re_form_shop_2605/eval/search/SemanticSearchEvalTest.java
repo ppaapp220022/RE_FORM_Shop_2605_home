@@ -71,6 +71,8 @@ class SemanticSearchEvalTest {
     private static final double[] THRESHOLDS = {0.0, 0.20, 0.25, 0.26, 0.27, 0.28, 0.29, 0.30, 0.32, 0.35, 0.36, 0.37, 0.38, 0.39, 0.40, 0.45, 0.70, 0.75, 0.78, 0.80, 0.82, 0.84};
     private static final double[] MARGINS = {0.02, 0.04, 0.06, 0.08, 0.10, 0.15, 1.0};
     private static final int PGVECTOR_DIMENSIONS = 1536;
+    private static final double PRODUCTION_THRESHOLD = Double.parseDouble(productionProperty("app.ai.search.similarity-threshold"));
+    private static final double PRODUCTION_RERANK_THRESHOLD = Double.parseDouble(productionProperty("app.ai.search.rerank-candidate-threshold"));
 
     /* scores: 기준값 없이 받은 전체 순위의 postId → 유사도 (진단용) */
     record Row(SearchEvalCase evalCase, List<Long> vector, List<Long> hybrid, Map<Long, Double> scores) {
@@ -87,7 +89,7 @@ class SemanticSearchEvalTest {
     @Test
     void semanticSearchQuality() {
         // 기본은 운영 application.properties의 임베딩 모델
-        String model = System.getProperty("eval.search.embeddingModel", productionEmbeddingModel());
+        String model = System.getProperty("eval.search.embeddingModel", productionProperty("spring.ai.openai.embedding.options.model"));
         OpenAiEmbeddingModel embeddingModel = new OpenAiEmbeddingModel(
                 OpenAiEmbeddingOptions.builder().model(model).dimensions(PGVECTOR_DIMENSIONS).build());
         SimpleVectorStore vectorStore = SimpleVectorStore.builder(embeddingModel).build();
@@ -97,7 +99,8 @@ class SemanticSearchEvalTest {
         List<Post> posts = SearchEvalCase.loadPosts();
         PostVectorService vectorService = new PostVectorService(provider,
                 new StaticListableBeanFactory().getBeanProvider(DataSource.class),
-                new StaticListableBeanFactory().getBeanProvider(EmbeddingModel.class), model);
+                new StaticListableBeanFactory().getBeanProvider(EmbeddingModel.class), model,
+                PRODUCTION_THRESHOLD, PRODUCTION_RERANK_THRESHOLD);
         // 글마다 임베딩 API를 부르면 운영 데이터셋(1000건)이 몇 분 걸리므로 재임베딩처럼 묶어 저장한다
         for (int from = 0; from < posts.size(); from += 100) {
             vectorService.savePostVectors(posts.subList(from, Math.min(from + 100, posts.size())));
@@ -114,7 +117,7 @@ class SemanticSearchEvalTest {
         // 모델마다 유사도 분포가 달라 운영 기준값(0.7)이 맞지 않을 수 있으므로, 넘겼을 때는 그 기준값으로 자른다
         String thresholdOverride = System.getProperty("eval.search.threshold");
         double threshold = thresholdOverride == null
-                ? PostSearchService.SIMILARITY_THRESHOLD : Double.parseDouble(thresholdOverride);
+                ? PRODUCTION_THRESHOLD : Double.parseDouble(thresholdOverride);
         for (SearchEvalCase evalCase : SearchEvalCase.loadQueries()) {
             Map<Long, Double> scores = allScores(vectorStore, evalCase.query(), posts.size());
             List<Long> vector = thresholdOverride == null
@@ -139,8 +142,7 @@ class SemanticSearchEvalTest {
     }
 
     /* 테스트 리소스의 application.properties가 main 것을 가리므로 클래스패스의 파일을 모두 확인한다 */
-    private static String productionEmbeddingModel() {
-        String key = "spring.ai.openai.embedding.options.model";
+    private static String productionProperty(String key) {
         try {
             for (URL url : Collections.list(SemanticSearchEvalTest.class.getClassLoader().getResources("application.properties"))) {
                 Properties properties = new Properties();
@@ -202,7 +204,7 @@ class SemanticSearchEvalTest {
     }
 
     private static List<Long> withinMargin(Row row, double margin) {
-        List<Long> above = aboveThreshold(row, PostSearchService.SIMILARITY_THRESHOLD);
+        List<Long> above = aboveThreshold(row, PRODUCTION_THRESHOLD);
         if (above.isEmpty()) {
             return above;
         }
@@ -265,7 +267,7 @@ class SemanticSearchEvalTest {
         });
 
         md.append("\n## 유사도 기준값별 비교 (vector)\n\n")
-                .append("운영 기준값은 ").append(PostSearchService.SIMILARITY_THRESHOLD)
+                .append("운영 기준값은 ").append(PRODUCTION_THRESHOLD)
                 .append(". 오탐 = 정답 없는 검색어에 나온 결과 수 합계, 평균 결과 수 = 정답 있는 검색어 기준\n\n")
                 .append("| 기준값 | R@10 | MRR | 오탐 | 평균 결과 수 |\n|---|---|---|---|---|\n");
         for (double threshold : THRESHOLDS) {
@@ -277,7 +279,7 @@ class SemanticSearchEvalTest {
                     mean(answerable, r -> aboveThreshold(r, threshold).size())));
         }
 
-        md.append("\n## 최고 점수 대비 범위별 비교 (vector, 기준값 ").append(PostSearchService.SIMILARITY_THRESHOLD)
+        md.append("\n## 최고 점수 대비 범위별 비교 (vector, 기준값 ").append(PRODUCTION_THRESHOLD)
                 .append(" 이상 중 최고 점수 - 범위 이상만)\n\n")
                 .append("| 범위 | R@10 | MRR | 오탐 | 평균 결과 수 |\n|---|---|---|---|---|\n");
         for (double margin : MARGINS) {
