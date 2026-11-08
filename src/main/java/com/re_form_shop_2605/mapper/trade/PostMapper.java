@@ -71,8 +71,8 @@ public interface PostMapper {
                                     @Param("minPrice") Integer minPrice,
                                     @Param("maxPrice") Integer maxPrice); // 찜 여부 확인용
 
-    // 4. postId 목록 총 개수 반환 (페이지네이션용)
-    int countPostsByIds(@Param("postIds") List<Long> postIds,
+    // 4. postId 목록 중 화면에 나오는 글(판매중·필터 조건)의 postId 반환 (순서 없음, 페이지네이션용)
+    List<Long> findVisiblePostIds(@Param("postIds") List<Long> postIds,
                         @Param("sport") Sport sport,
                         @Param("condition") Grade condition,
                         @Param("tradeType") DeliveryType tradeType,

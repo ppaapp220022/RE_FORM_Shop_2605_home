@@ -1,10 +1,14 @@
 package com.re_form_shop_2605.service.trade;
 
+import com.re_form_shop_2605.dto.common.PageResponse;
+import com.re_form_shop_2605.dto.trade.PostCardDTO;
 import com.re_form_shop_2605.entity.Enum.Sport;
+import com.re_form_shop_2605.mapper.trade.PostMapper;
 import com.re_form_shop_2605.entity.trade.Post;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.ai.document.Document;
+import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.ai.vectorstore.filter.FilterExpressionTextParser;
@@ -13,6 +17,7 @@ import org.springframework.beans.factory.support.StaticListableBeanFactory;
 
 import javax.sql.DataSource;
 
+import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -22,6 +27,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -41,11 +48,12 @@ class PostVectorSearchTest {
     private static final String MODEL = "text-embedding-3-small";
 
     private static PostVectorService vectorService(VectorStore vectorStore) {
-        return new PostVectorService(provider(vectorStore), new StaticListableBeanFactory().getBeanProvider(DataSource.class), MODEL);
+        return new PostVectorService(provider(vectorStore), new StaticListableBeanFactory().getBeanProvider(DataSource.class),
+                new StaticListableBeanFactory().getBeanProvider(EmbeddingModel.class), MODEL);
     }
 
     private static PostSearchService searchService(VectorStore vectorStore) {
-        return new PostSearchService(null, null, provider(vectorStore), MODEL, null);
+        return new PostSearchService(null, null, provider(vectorStore), vectorService(vectorStore), MODEL, null);
     }
 
     @SuppressWarnings("unchecked")
@@ -261,7 +269,7 @@ class PostVectorSearchTest {
     }
 
     private static PostSearchService rerankingService(VectorStore vectorStore, PostSearchReranker reranker) {
-        return new PostSearchService(null, null, provider(vectorStore), MODEL, reranker);
+        return new PostSearchService(null, null, provider(vectorStore), vectorService(vectorStore), MODEL, reranker);
     }
 
     @Test
@@ -361,5 +369,86 @@ class PostVectorSearchTest {
         }
         assertThat(cache.get("q0")).isNull();
         assertThat(cache.get("q" + PostSearchService.RERANK_CACHE_SIZE)).containsExactly((long) PostSearchService.RERANK_CACHE_SIZE);
+    }
+
+    @Test
+    void findSimilarPostIds_같은_글이_많아도_다른_묶음이_후보에_들어감() {
+        // 운영 더미 데이터처럼 같은 글이 수십 건씩 있으면, 상위 N건만 받아 묶을 때 한두 묶음만 남아 재정렬이 고를 게 없었다
+        VectorStore vectorStore = mock(VectorStore.class);
+        List<Document> results = new java.util.ArrayList<>();
+        for (long id = 1; id <= 150; id++) {
+            results.add(titled(id, 0.35, "KCC 홈 저지", "KCC"));
+        }
+        results.add(titled(200L, 0.26, "울산 HD 홈 유니폼", "울산 HD"));
+        when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(results);
+        PostSearchReranker reranker = mock(PostSearchReranker.class);
+        when(reranker.rerank(anyString(), anyList())).thenReturn(Optional.of(List.of(200L)));
+
+        List<Long> ids = rerankingService(vectorStore, reranker).findSimilarPostIds("파란색 축구 저지");
+
+        assertThat(ids).containsExactly(200L);
+        ArgumentCaptor<SearchRequest> request = ArgumentCaptor.forClass(SearchRequest.class);
+        verify(vectorStore).similaritySearch(request.capture());
+        // PG가 없으면(메모리 저장소) 전부 받아 묶는다
+        assertThat(request.getValue().getTopK()).isEqualTo(PostVectorService.IN_MEMORY_TOP_K);
+    }
+
+    @Test
+    void findSimilarPostIds_판매중인_글이_없는_묶음은_후보에서_빼고_묶음_안에서도_판매중만() {
+        VectorStore vectorStore = mock(VectorStore.class);
+        when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(List.of(
+                titled(1L, 0.40, "T1 저지", "T1"), titled(2L, 0.40, "T1 저지", "T1"), titled(3L, 0.40, "T1 저지", "T1"),
+                titled(4L, 0.35, "젠지 저지", "젠지")));
+        PostMapper postMapper = mock(PostMapper.class);
+        when(postMapper.findVisiblePostIds(anyList(), isNull(), isNull(), isNull(), isNull(), isNull())).thenReturn(List.of(3L, 2L));
+        PostSearchReranker reranker = mock(PostSearchReranker.class);
+        when(reranker.rerank(anyString(), anyList())).thenReturn(Optional.of(List.of(2L)));
+        PostSearchService service = new PostSearchService(postMapper, null, provider(vectorStore), vectorService(vectorStore), MODEL, reranker);
+
+        assertThat(service.findSimilarPostIds("롤 팀 유니폼")).containsExactly(2L, 3L);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<PostSearchReranker.Candidate>> candidates = ArgumentCaptor.forClass(List.class);
+        verify(reranker).rerank(anyString(), candidates.capture());
+        assertThat(candidates.getValue()).extracting(PostSearchReranker.Candidate::postId).containsExactly(2L);
+    }
+
+    @Test
+    void findCandidateGroups_묶음_SQL이_실패하면_상위_일부만_받아_묶음() throws SQLException {
+        VectorStore vectorStore = mock(VectorStore.class);
+        when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(List.of(titled(1L, 0.4, "a", "x")));
+        DataSource dataSource = mock(DataSource.class);
+        when(dataSource.getConnection()).thenThrow(new SQLException("pg down"));
+        EmbeddingModel embeddingModel = mock(EmbeddingModel.class);
+        when(embeddingModel.embed(anyString())).thenReturn(new float[]{0.1f, 0.2f});
+        PostVectorService service = new PostVectorService(provider(vectorStore),
+                new StaticListableBeanFactory(Map.of("postgresDataSource", dataSource)).getBeanProvider(DataSource.class),
+                new StaticListableBeanFactory(Map.of("embeddingModel", embeddingModel)).getBeanProvider(EmbeddingModel.class), MODEL);
+
+        List<PostVectorService.CandidateGroup> groups = service.findCandidateGroups("기아", 0.25, 10);
+
+        assertThat(groups).extracting(PostVectorService.CandidateGroup::postIds).containsExactly(List.of(1L));
+        ArgumentCaptor<SearchRequest> request = ArgumentCaptor.forClass(SearchRequest.class);
+        verify(vectorStore).similaritySearch(request.capture());
+        assertThat(request.getValue().getTopK()).isEqualTo(PostVectorService.FALLBACK_TOP_K);
+    }
+
+    @Test
+    void search_화면에_안_나오는_글을_빼고_페이지를_나눔() {
+        // 판매 완료 글이 벡터 결과 앞쪽을 채우면, 거르지 않고 자를 때 1페이지가 비고 총 건수와 어긋났다
+        VectorStore vectorStore = mock(VectorStore.class);
+        List<Document> results = java.util.stream.LongStream.rangeClosed(1, 12)
+                .mapToObj(id -> result(id, 0.5)).toList();
+        when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(results);
+        PostMapper postMapper = mock(PostMapper.class);
+        when(postMapper.findPostsByCondition(anyString(), any(), any(), any(), any(), any(), any(), eq(0), eq(Integer.MAX_VALUE), any()))
+                .thenReturn(List.of());
+        when(postMapper.findVisiblePostIds(anyList(), any(), any(), any(), any(), any())).thenReturn(List.of(12L, 11L));
+        PostSearchService service = new PostSearchService(postMapper, null, provider(vectorStore), vectorService(vectorStore), MODEL, null);
+
+        PageResponse<PostCardDTO> page = service.search("T1", null, null, null, null, null, "latest", 1, 10, null);
+
+        assertThat(page.totalElements()).isEqualTo(2);
+        verify(postMapper).findPostsByIds(eq(List.of(11L, 12L)), any(), any(), any(), any(), any(), any());
     }
 }

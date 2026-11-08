@@ -23,12 +23,20 @@ import java.util.function.Function;
  *    tag      : exact(정확한 팀명) / alias(별칭) / player(선수) / describe(설명형) / typo(오타)
  *               / english(영문) / category(종목·리그) / none(정답 없음)
  *    relevant : 검색 의도에 맞는 판매글 전부. 비어 있으면 아무것도 나오지 않아야 한다
+ *  - 데이터셋은 -Peval.search.dataset=prod 로 고른다 (기본 = 직접 만든 34개 검색어)
+ *    prod : 운영 판매중 글 1000건(2026-11-08 공개 API 기준). 팀 12개 × 같은 본문 80여 건씩이라
+ *           벡터 상위 N건을 한 팀이 다 차지하는 경우를 재현한다
  * ─────────────────────────────────────────────────────
  */
 public record SearchEvalCase(String id, String tag, String query, List<Long> relevant) {
 
-    public static final String POSTS = "/eval/search/posts.jsonl";
-    public static final String QUERIES = "/eval/search/queries.jsonl";
+    private static final String DIR = "default".equals(dataset()) ? "/eval/search" : "/eval/search/" + dataset();
+    public static final String POSTS = DIR + "/posts.jsonl";
+    public static final String QUERIES = DIR + "/queries.jsonl";
+
+    public static String dataset() {
+        return System.getProperty("eval.search.dataset", "default");
+    }
 
     public boolean answerable() {
         return !relevant.isEmpty();
