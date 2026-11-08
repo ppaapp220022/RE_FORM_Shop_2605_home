@@ -52,8 +52,9 @@ public class PostVectorService {
     // text-embedding-3-small 기준값. 모델을 바꾸면 유사도 분포가 달라지므로 SemanticSearchEvalTest로 다시 정해
     // app.ai.search.* 프로퍼티로 넘긴다 (모델 설정 바로 옆)
     public static final double DEFAULT_SIMILARITY_THRESHOLD = 0.30;
-    // 재정렬할 때는 관련 없는 글을 모델이 걸러 주므로 기준값을 낮춰 후보를 넓힌다
-    public static final double DEFAULT_RERANK_CANDIDATE_THRESHOLD = 0.25;
+    // 재정렬할 때는 관련 없는 글을 모델이 걸러 주므로 기준값 없이 유사도 상위 묶음을 후보로 보낸다
+    //  ("롤 팀 유니폼"처럼 상식이 필요한 검색어는 정답 팀의 유사도가 엉뚱한 팀보다 낮아, 0.25로 자르면 정답이 후보에서 빠졌다)
+    public static final double DEFAULT_RERANK_CANDIDATE_THRESHOLD = 0.0;
 
     private final ObjectProvider<VectorStore> vectorStoreProvider;
     private final ObjectProvider<DataSource> postgresDataSourceProvider;
