@@ -33,6 +33,7 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -231,7 +232,7 @@ class PostVectorSearchTest {
         assertThat(ids).containsExactly(3L, 1L);
         ArgumentCaptor<SearchRequest> captor = ArgumentCaptor.forClass(SearchRequest.class);
         verify(vectorStore).similaritySearch(captor.capture());
-        assertThat(captor.getValue().getSimilarityThreshold()).isEqualTo(PostSearchService.SIMILARITY_THRESHOLD);
+        assertThat(captor.getValue().getSimilarityThreshold()).isEqualTo(PostVectorService.DEFAULT_SIMILARITY_THRESHOLD);
         assertThat(captor.getValue().getTopK()).isEqualTo(PostSearchService.SIMILARITY_TOP_K);
         // 다른 모델로 만든 벡터와 비교하지 않도록 현재 모델 벡터만 고른다
         assertThat(captor.getValue().getFilterExpression())
@@ -285,7 +286,7 @@ class PostVectorSearchTest {
         assertThat(ids).containsExactly(2L, 3L);
         ArgumentCaptor<SearchRequest> request = ArgumentCaptor.forClass(SearchRequest.class);
         verify(vectorStore).similaritySearch(request.capture());
-        assertThat(request.getValue().getSimilarityThreshold()).isEqualTo(PostSearchService.RERANK_CANDIDATE_THRESHOLD);
+        assertThat(request.getValue().getSimilarityThreshold()).isEqualTo(PostVectorService.DEFAULT_RERANK_CANDIDATE_THRESHOLD);
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<PostSearchReranker.Candidate>> candidates = ArgumentCaptor.forClass(List.class);
         verify(reranker).rerank(anyString(), candidates.capture());
@@ -470,5 +471,44 @@ class PostVectorSearchTest {
                 .metadata(Map.of("postId", "2", "title", "서울 홈", "team", "서울", "sport", "BASKETBALL")).score(0.3).build();
 
         assertThat(PostVectorService.groupDocuments(List.of(soccer, basketball), 10)).hasSize(2);
+    }
+
+    @Test
+    void savePostVectorAfterCommit_트랜잭션이_커밋된_뒤에만_저장() {
+        VectorStore vectorStore = mock(VectorStore.class);
+        PostVectorService service = vectorService(vectorStore);
+        org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+        try {
+            service.savePostVectorAfterCommit(post(7L));
+            verify(vectorStore, never()).add(anyList());
+
+            org.springframework.transaction.support.TransactionSynchronizationManager.getSynchronizations()
+                    .forEach(org.springframework.transaction.support.TransactionSynchronization::afterCommit);
+        } finally {
+            org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
+        }
+        verify(vectorStore, timeout(2000)).add(argThat(documents -> documents.get(0).getMetadata().get("postId").equals("7")));
+    }
+
+    @Test
+    void savePostVectorAfterCommit_트랜잭션_밖이면_바로_저장() {
+        VectorStore vectorStore = mock(VectorStore.class);
+
+        vectorService(vectorStore).savePostVectorAfterCommit(post(8L));
+
+        verify(vectorStore, timeout(2000)).add(anyList());
+    }
+
+    @Test
+    void 기준값은_프로퍼티로_바꿀_수_있음() {
+        VectorStore vectorStore = mock(VectorStore.class);
+        when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(List.of(result(1L, 0.5), result(2L, 0.35)));
+        PostVectorService vectorService = new PostVectorService(provider(vectorStore),
+                new StaticListableBeanFactory().getBeanProvider(DataSource.class),
+                new StaticListableBeanFactory().getBeanProvider(EmbeddingModel.class), MODEL, 0.4, 0.3);
+
+        List<Long> ids = new PostSearchService(null, null, provider(vectorStore), vectorService, MODEL, null).findSimilarPostIds("기아");
+
+        assertThat(ids).containsExactly(1L);
     }
 }

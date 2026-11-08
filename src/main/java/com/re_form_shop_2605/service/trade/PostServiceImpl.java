@@ -104,7 +104,7 @@ public class PostServiceImpl implements PostService {
         }
 
         applyPostModeration(savedPost);
-        postVectorService.savePostVector(savedPost); // 벡터 저장 (유사 의미 검색용)
+        postVectorService.savePostVectorAfterCommit(savedPost); // 벡터 저장 (유사 의미 검색용, 커밋 뒤)
 
         return savedPost.getPostId();
     }
@@ -253,7 +253,10 @@ public class PostServiceImpl implements PostService {
         }
 
         applyPostModeration(post);
-        postVectorService.savePostVector(post); // 수정한 내용으로 벡터 덮어쓰기
+        // 임베딩에 쓰는 값(제목·종목·팀·유니폼명·본문)이 바뀐 경우에만 벡터 덮어쓰기 - 가격·이미지만 바꾸면 그대로 둔다
+        if (beforeUpdate.embeddingChanged(post)) {
+            postVectorService.savePostVectorAfterCommit(post);
+        }
     }
 
     @Override
@@ -496,6 +499,7 @@ public class PostServiceImpl implements PostService {
     private record PostSnapshot(
             String title,
             String content,
+            Sport sport,
             String team,
             String uniformName,
             Grade grade,
@@ -508,6 +512,7 @@ public class PostServiceImpl implements PostService {
             return new PostSnapshot(
                     post.getTitle(),
                     post.getContent(),
+                    post.getSport(),
                     post.getTeam(),
                     post.getUniformName(),
                     post.getGrade(),
@@ -516,6 +521,15 @@ public class PostServiceImpl implements PostService {
                     post.getPrice(),
                     post.getDeliveryType()
             );
+        }
+
+        /* 임베딩에 쓰는 값(PostVectorService.buildContent)이 바뀌었는지 */
+        private boolean embeddingChanged(Post post) {
+            return !Objects.equals(title, post.getTitle())
+                    || !Objects.equals(content, post.getContent())
+                    || sport != post.getSport()
+                    || !Objects.equals(team, post.getTeam())
+                    || !Objects.equals(uniformName, post.getUniformName());
         }
     }
 

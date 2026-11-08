@@ -118,9 +118,9 @@ public class PostReembedJob {
             String searchCheck;
             try {
                 PostVectorService.SearchCheck check = postVectorService.checkSearch(
-                        SEARCH_CHECK_QUERY, 5, PostSearchService.SIMILARITY_THRESHOLD);
+                        SEARCH_CHECK_QUERY, 5, postVectorService.similarityThreshold());
                 searchCheck = String.format(Locale.ROOT, "기준값 %.2f 이상 %d건 (최고 점수 %s)",
-                        PostSearchService.SIMILARITY_THRESHOLD, check.matched(),
+                        postVectorService.similarityThreshold(), check.matched(),
                         check.topScore() == null ? "-" : String.format(Locale.ROOT, "%.3f", check.topScore()));
             } catch (Exception exception) {
                 log.error("재임베딩 뒤 검색 확인 실패", exception);

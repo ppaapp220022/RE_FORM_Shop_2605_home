@@ -62,6 +62,8 @@ class PostReembedJobTest {
         when(vectorService.deleteVectorsOfOtherModels()).thenReturn(30);
         when(vectorService.checkSearch(anyString(), anyInt(), anyDouble()))
                 .thenReturn(new PostVectorService.SearchCheck(4, 0.512));
+        // 점검 검색은 프로퍼티로 정한 운영 기준값을 쓴다
+        when(vectorService.similarityThreshold()).thenReturn(0.42);
         PostReembedJob job = new PostReembedJob(repository(List.of(posts(1, 100), posts(101, 150))), vectorService);
 
         assertThat(job.start()).isTrue();
@@ -73,8 +75,8 @@ class PostReembedJobTest {
         assertThat(status.embedded()).isEqualTo(150);
         assertThat(status.failed()).isZero();
         assertThat(status.cleanup()).isEqualTo("이전 모델 벡터 30건 삭제");
-        assertThat(status.searchCheck()).isEqualTo("기준값 0.30 이상 4건 (최고 점수 0.512)");
-        verify(vectorService).checkSearch("유니폼", 5, PostSearchService.SIMILARITY_THRESHOLD);
+        assertThat(status.searchCheck()).isEqualTo("기준값 0.42 이상 4건 (최고 점수 0.512)");
+        verify(vectorService).checkSearch("유니폼", 5, 0.42);
         assertThat(status.finishedAt()).isNotNull();
     }
 
@@ -85,6 +87,7 @@ class PostReembedJobTest {
                 .thenReturn(new PostVectorService.BatchResult(98, 2, "RateLimitException: slow down"));
         when(vectorService.checkSearch(anyString(), anyInt(), anyDouble()))
                 .thenReturn(new PostVectorService.SearchCheck(0, null));
+        when(vectorService.similarityThreshold()).thenReturn(0.30);
         PostReembedJob job = new PostReembedJob(repository(List.of(posts(1, 100))), vectorService);
 
         job.start();

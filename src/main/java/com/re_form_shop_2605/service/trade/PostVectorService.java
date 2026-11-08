@@ -7,11 +7,15 @@ import lombok.extern.log4j.Log4j2;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
+import jakarta.annotation.PreDestroy;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import org.springframework.ai.document.Document;
 
@@ -23,6 +27,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 /**
  * 작성자: 손민정
  * 작성일: 2026-05-13
@@ -40,20 +49,103 @@ public class PostVectorService {
     static final int IN_MEMORY_TOP_K = 10_000;
     // 그룹 집계 SQL이 실패하면 이만큼만 받아 Java에서 묶는다 (예전 방식)
     static final int FALLBACK_TOP_K = 100;
+    // text-embedding-3-small 기준값. 모델을 바꾸면 유사도 분포가 달라지므로 SemanticSearchEvalTest로 다시 정해
+    // app.ai.search.* 프로퍼티로 넘긴다 (모델 설정 바로 옆)
+    public static final double DEFAULT_SIMILARITY_THRESHOLD = 0.30;
+    // 재정렬할 때는 관련 없는 글을 모델이 걸러 주므로 기준값을 낮춰 후보를 넓힌다
+    public static final double DEFAULT_RERANK_CANDIDATE_THRESHOLD = 0.25;
 
     private final ObjectProvider<VectorStore> vectorStoreProvider;
     private final ObjectProvider<DataSource> postgresDataSourceProvider;
     private final ObjectProvider<EmbeddingModel> embeddingModelProvider;
     private final String embeddingModel;
+    private final double similarityThreshold;
+    private final double rerankCandidateThreshold;
+    // 등록·수정 요청을 임베딩 호출(OpenAI)이 붙잡지 않도록 커밋 뒤 이 스레드에서 저장한다
+    //  - 임베딩이 느려 대기가 SAVE_QUEUE_SIZE건을 넘으면 받지 않고 로그만 남긴다 (전체 재임베딩으로 복구)
+    static final int SAVE_QUEUE_SIZE = 1000;
+    private final ExecutorService saveExecutor = new ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS,
+            new ArrayBlockingQueue<>(SAVE_QUEUE_SIZE), runnable -> {
+        Thread thread = new Thread(runnable, "post-embed");
+        thread.setDaemon(true);
+        return thread;
+    });
 
+    // 생성자가 둘이라 스프링이 고를 수 있도록 표시한다 (없으면 기본 생성자를 찾다 기동 실패)
+    @Autowired
     public PostVectorService(ObjectProvider<VectorStore> vectorStoreProvider,
                              @Qualifier("postgresDataSource") ObjectProvider<DataSource> postgresDataSourceProvider,
                              ObjectProvider<EmbeddingModel> embeddingModelProvider,
-                             @Value("${spring.ai.openai.embedding.options.model:text-embedding-3-small}") String embeddingModel) {
+                             @Value("${spring.ai.openai.embedding.options.model:text-embedding-3-small}") String embeddingModel,
+                             @Value("${app.ai.search.similarity-threshold:" + DEFAULT_SIMILARITY_THRESHOLD + "}") double similarityThreshold,
+                             @Value("${app.ai.search.rerank-candidate-threshold:" + DEFAULT_RERANK_CANDIDATE_THRESHOLD + "}") double rerankCandidateThreshold) {
         this.vectorStoreProvider = vectorStoreProvider;
         this.postgresDataSourceProvider = postgresDataSourceProvider;
         this.embeddingModelProvider = embeddingModelProvider;
         this.embeddingModel = embeddingModel;
+        this.similarityThreshold = similarityThreshold;
+        this.rerankCandidateThreshold = rerankCandidateThreshold;
+    }
+
+    /* 기본 기준값 (단위 테스트·eval용) */
+    public PostVectorService(ObjectProvider<VectorStore> vectorStoreProvider, ObjectProvider<DataSource> postgresDataSourceProvider,
+                             ObjectProvider<EmbeddingModel> embeddingModelProvider, String embeddingModel) {
+        this(vectorStoreProvider, postgresDataSourceProvider, embeddingModelProvider, embeddingModel,
+                DEFAULT_SIMILARITY_THRESHOLD, DEFAULT_RERANK_CANDIDATE_THRESHOLD);
+    }
+
+    /* 검색 결과로 내보낼 최소 유사도 */
+    public double similarityThreshold() {
+        return similarityThreshold;
+    }
+
+    /* 재정렬 후보로 보낼 최소 유사도 */
+    public double rerankCandidateThreshold() {
+        return rerankCandidateThreshold;
+    }
+
+    // 배포로 재시작할 때 대기 중인 저장을 잠시 기다려, 커밋된 글의 벡터가 조용히 빠지지 않게 한다
+    @PreDestroy
+    void shutdown() throws InterruptedException {
+        saveExecutor.shutdown();
+        if (!saveExecutor.awaitTermination(10, TimeUnit.SECONDS)) {
+            log.warn("벡터 저장 대기 {}건을 마치지 못하고 종료합니다. 재임베딩으로 복구하세요.", saveExecutor.shutdownNow().size());
+        }
+    }
+
+    /* 판매글 등록·수정 트랜잭션이 커밋된 뒤 다른 스레드에서 벡터 저장 */
+    // 트랜잭션 안에서 임베딩을 호출하면 응답이 올 때까지 DB 커넥션을 잡고 있고, 롤백되면 벡터만 남는다
+    //  - afterCommit 콜백도 아직 커넥션을 놓기 전이라 그 안에서 직접 부르지 않고 스레드로 넘긴다
+    //  - 엔티티는 다른 스레드에서 지연 로딩되지 않도록 임베딩에 쓰는 값만 복사해 넘긴다
+    //  - 트랜잭션 밖에서 부르면 바로 넘긴다
+    public void savePostVectorAfterCommit(Post post) {
+        Post copy = Post.builder()
+                .postId(post.getPostId())
+                .title(post.getTitle())
+                .sport(post.getSport())
+                .team(post.getTeam())
+                .uniformName(post.getUniformName())
+                .content(post.getContent())
+                .price(post.getPrice())
+                .build();
+        // 작업을 받지 못해도(종료 중·대기 초과) 이미 커밋된 요청을 실패시키지 않도록 로그만 남긴다
+        Runnable save = () -> {
+            try {
+                saveExecutor.execute(() -> savePostVector(copy));
+            } catch (RejectedExecutionException exception) {
+                log.warn("savePostVectorAfterCommit : 벡터 저장을 받지 못했습니다. 재임베딩으로 복구하세요  |  postId {}", copy.getPostId());
+            }
+        };
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    save.run();
+                }
+            });
+        } else {
+            save.run();
+        }
     }
 
     /* 판매글 등록·수정 시 벡터 저장 */
@@ -196,14 +288,14 @@ public class PostVectorService {
         }
         EmbeddingModel model = embeddingModelProvider.getIfUnique();
         if (model == null) {
-            log.warn("findCandidateGroups : 임베딩 모델을 하나로 고를 수 없어 상위 {}건만 묶습니다  |  query={}", FALLBACK_TOP_K, query);
+            log.warn("findCandidateGroups : 임베딩 모델을 하나로 고를 수 없어 상위 {}건만 묶습니다", FALLBACK_TOP_K);
             return groupInMemory(vectorStore, query, threshold, limit, FALLBACK_TOP_K);
         }
         float[] queryEmbedding = model.embed(query);
         try {
             return groupsBySql(new JdbcTemplate(dataSource), queryEmbedding, threshold, limit);
         } catch (RuntimeException exception) {
-            log.error("findCandidateGroups : 묶음 집계 SQL 실패, 상위 {}건만 묶습니다  |  query={}", FALLBACK_TOP_K, query, exception);
+            log.error("findCandidateGroups : 묶음 집계 SQL 실패, 상위 {}건만 묶습니다", FALLBACK_TOP_K, exception);
             return groupInMemory(vectorStore, query, threshold, limit, FALLBACK_TOP_K);
         }
     }
