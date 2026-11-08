@@ -48,9 +48,15 @@ public class PerformanceAspect {
                     .build();
 
             if (executionTime > 100) { // 0ms 초과일때만 Redis에 저장
-                redisTemplate.opsForList().rightPush(logKey, performanceLogDTO);
-                log.info("Redis 저장 시도 key={}, class={}, method={}, time={}ms",
-                        logKey, className, methodName, executionTime);
+                // 측정 기록은 부가 기능이라 Redis가 끊겨도 원래 메서드의 결과·예외를 덮어쓰지 않게 여기서 삼킨다
+                try {
+                    redisTemplate.opsForList().rightPush(logKey, performanceLogDTO);
+                    log.info("Redis 저장 시도 key={}, class={}, method={}, time={}ms",
+                            logKey, className, methodName, executionTime);
+                } catch (RuntimeException redisException) {
+                    log.warn("성능 기록을 Redis에 저장하지 못했습니다. class={}, method={}: {}",
+                            className, methodName, redisException.getMessage());
+                }
             }
         }
     }
