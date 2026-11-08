@@ -40,8 +40,9 @@ jobs:
       - name: Compile
         run: ./gradlew compileJava compileTestJava --no-daemon
 
-      - name: Moderation keyword eval
-        run: ./gradlew test --tests '*ModerationKeywordEvalTest' --no-daemon
+      # 단위·컨텍스트 테스트 전체 (H2 사용, 외부 API·Redis 불필요). 모더레이션 키워드 eval도 여기 포함된다
+      - name: Test
+        run: ./gradlew test --no-daemon
 
       - name: Upload eval report
         if: always()
