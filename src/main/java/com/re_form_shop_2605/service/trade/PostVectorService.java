@@ -23,15 +23,18 @@ import javax.sql.DataSource;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 /**
  * 작성자: 손민정
  * 작성일: 2026-05-13
@@ -279,30 +282,50 @@ public class PostVectorService {
     //    (검색어 임베딩 실패는 대체 경로도 같은 호출을 다시 하므로 그대로 던진다)
     //  - PG가 없으면(메모리 저장소) 전부 받아 Java에서 묶는다
     public List<CandidateGroup> findCandidateGroups(String query, double threshold, int limit) {
+        return findCandidateGroups(query, threshold, limit, null);
+    }
+
+    /* onlyPostIds가 있으면 그 글의 벡터만 묶는다 (null이면 전체) */
+    // 벡터에는 판매 완료 글도 남아 있어(운영 2800건 중 1800건, 1812묶음), 전체를 묶어 상위 limit개를 자르면
+    // 판매 완료 글만 있는 묶음이 자리를 다 차지해 판매중 묶음이 1~3개만 남았다 - 판매중 글로만 묶어야 후보가 채워진다
+    public List<CandidateGroup> findCandidateGroups(String query, double threshold, int limit, Collection<Long> onlyPostIds) {
+        if (onlyPostIds != null && onlyPostIds.isEmpty()) {
+            return List.of();
+        }
         VectorStore vectorStore = vectorStoreProvider.getIfAvailable();
         if (vectorStore == null) {
             throw new IllegalStateException("벡터 저장소가 비활성화되어 있습니다.");
         }
         DataSource dataSource = postgresDataSourceProvider.getIfAvailable();
         if (dataSource == null) {
-            return groupInMemory(vectorStore, query, threshold, limit, IN_MEMORY_TOP_K);
+            return groupInMemory(vectorStore, query, threshold, limit, IN_MEMORY_TOP_K, onlyPostIds);
         }
         EmbeddingModel model = embeddingModelProvider.getIfUnique();
         if (model == null) {
             log.warn("findCandidateGroups : 임베딩 모델을 하나로 고를 수 없어 상위 {}건만 묶습니다", FALLBACK_TOP_K);
-            return groupInMemory(vectorStore, query, threshold, limit, FALLBACK_TOP_K);
+            return groupInMemory(vectorStore, query, threshold, limit, FALLBACK_TOP_K, onlyPostIds);
         }
         float[] queryEmbedding = model.embed(query);
         try {
-            return groupsBySql(new JdbcTemplate(dataSource), queryEmbedding, threshold, limit);
+            return groupsBySql(new JdbcTemplate(dataSource), queryEmbedding, threshold, limit, onlyPostIds);
         } catch (RuntimeException exception) {
             log.error("findCandidateGroups : 묶음 집계 SQL 실패, 상위 {}건만 묶습니다", FALLBACK_TOP_K, exception);
-            return groupInMemory(vectorStore, query, threshold, limit, FALLBACK_TOP_K);
+            return groupInMemory(vectorStore, query, threshold, limit, FALLBACK_TOP_K, onlyPostIds);
         }
     }
 
-    private List<CandidateGroup> groupsBySql(JdbcTemplate jdbcTemplate, float[] queryEmbedding, double threshold, int limit) {
+    private List<CandidateGroup> groupsBySql(JdbcTemplate jdbcTemplate, float[] queryEmbedding, double threshold, int limit,
+                                             Collection<Long> onlyPostIds) {
         PGvector vector = new PGvector(queryEmbedding);
+        List<Object> args = new ArrayList<>(List.of(vector, embeddingModel));
+        String postIdFilter = "";
+        if (onlyPostIds != null) {
+            // metadata의 postId는 문자열로 비교한다 - 숫자만 넣으므로 배열 리터럴 '{1,2,3}'로 넘겨도 안전하다
+            postIdFilter = " AND metadata->>'postId' = ANY(?::text[])";
+            args.add(onlyPostIds.stream().map(String::valueOf).collect(Collectors.joining(",", "{", "}")));
+        }
+        args.add(1 - threshold);
+        args.add(limit);
         return jdbcTemplate.query("""
                         SELECT title, sport, team, MIN(distance) AS distance,
                                string_agg(post_id, ',' ORDER BY distance, post_id) AS post_ids,
@@ -310,25 +333,32 @@ public class PostVectorService {
                         FROM (SELECT metadata->>'title' AS title, metadata->>'sport' AS sport, metadata->>'team' AS team,
                                      metadata->>'postId' AS post_id, embedding <=> ? AS distance
                               FROM %s
-                              WHERE metadata->>'%s' = ? AND metadata->>'postId' IS NOT NULL) v
+                              WHERE metadata->>'%s' = ? AND metadata->>'postId' IS NOT NULL%s) v
                         WHERE distance <= ?
                         GROUP BY title, sport, team
                         ORDER BY MIN(distance)
                         LIMIT ?
-                        """.formatted(VECTOR_TABLE, MODEL_KEY),
+                        """.formatted(VECTOR_TABLE, MODEL_KEY, postIdFilter),
                 (rs, rowNum) -> new CandidateGroup(rs.getString("title"), rs.getString("sport"), rs.getString("team"),
                         Arrays.stream(rs.getString("post_ids").split(",")).map(Long::parseLong).toList(),
                         Arrays.stream(rs.getString("scores").split(",")).map(Double::parseDouble).toList()),
-                vector, embeddingModel, 1 - threshold, limit);
+                args.toArray());
     }
 
-    private List<CandidateGroup> groupInMemory(VectorStore vectorStore, String query, double threshold, int limit, int topK) {
+    private List<CandidateGroup> groupInMemory(VectorStore vectorStore, String query, double threshold, int limit, int topK,
+                                               Collection<Long> onlyPostIds) {
         List<Document> results = vectorStore.similaritySearch(SearchRequest.builder()
                 .query(query)
                 .topK(topK)
                 .similarityThreshold(threshold)
                 .filterExpression(modelFilter(embeddingModel))
                 .build());
+        if (onlyPostIds != null) {
+            Set<String> allowed = onlyPostIds.stream().map(String::valueOf).collect(Collectors.toSet());
+            results = results.stream()
+                    .filter(result -> allowed.contains(String.valueOf(result.getMetadata().get("postId"))))
+                    .toList();
+        }
         return groupDocuments(results, limit);
     }
 

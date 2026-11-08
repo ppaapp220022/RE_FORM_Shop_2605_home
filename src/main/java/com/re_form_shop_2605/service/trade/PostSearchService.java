@@ -149,8 +149,11 @@ public class PostSearchService {
         }
         try {
             if (reranker != null) {
+                // 판매중 글로만 묶어야 판매 완료 묶음이 후보 자리를 차지하지 않는다 (postMapper가 없으면 - eval·단위 테스트 - 거르지 않는다)
+                Set<Long> onSale = postMapper == null ? null : new HashSet<>(postMapper.findOnSalePostIds());
                 List<PostVectorService.CandidateGroup> groups = onSaleOnly(
-                        vectorService.findCandidateGroups(query, vectorService.rerankCandidateThreshold(), RERANK_CANDIDATE_GROUPS));
+                        vectorService.findCandidateGroups(query, vectorService.rerankCandidateThreshold(), RERANK_CANDIDATE_GROUPS, onSale),
+                        onSale);
                 // 검색어 원문은 개인정보가 섞일 수 있어 운영 로그(INFO)에는 남기지 않는다
                 // 후보 팀·점수는 검색어가 아니라 판매글 정보라 INFO로 남긴다 - 재정렬이 0건일 때 후보 부족인지 모델 판단인지 가린다
                 log.info("AI 검색 재정렬 후보 {}묶음, 최고 점수 {}, 후보 {}", groups.size(),
@@ -186,13 +189,11 @@ public class PostSearchService {
 
     /* 판매중인 글만 남기고, 판매중인 글이 없는 묶음은 뺀 뒤 상위 RERANK_CANDIDATES개 */
     // 판매 완료 글만 있는 묶음을 모델이 고르면 결과가 0건이 되고, 후보 자리만 차지한다
-    //  (postMapper가 없으면 - eval·단위 테스트 - 거르지 않는다)
-    private List<PostVectorService.CandidateGroup> onSaleOnly(List<PostVectorService.CandidateGroup> groups) {
-        if (postMapper == null || groups.isEmpty()) {
+    //  (SQL에서 이미 판매중 글로만 묶지만, 대체 경로(메모리 묶음)에서도 같은 결과가 되도록 한 번 더 거른다)
+    private List<PostVectorService.CandidateGroup> onSaleOnly(List<PostVectorService.CandidateGroup> groups, Set<Long> onSale) {
+        if (onSale == null || groups.isEmpty()) {
             return groups.stream().limit(RERANK_CANDIDATES).toList();
         }
-        List<Long> ids = groups.stream().flatMap(group -> group.postIds().stream()).toList();
-        Set<Long> onSale = new HashSet<>(postMapper.findVisiblePostIds(ids, null, null, null, null, null));
         return groups.stream()
                 .map(group -> group.retain(onSale::contains))
                 .filter(group -> !group.postIds().isEmpty())

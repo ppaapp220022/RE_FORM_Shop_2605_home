@@ -401,7 +401,7 @@ class PostVectorSearchTest {
                 titled(1L, 0.40, "T1 저지", "T1"), titled(2L, 0.40, "T1 저지", "T1"), titled(3L, 0.40, "T1 저지", "T1"),
                 titled(4L, 0.35, "젠지 저지", "젠지")));
         PostMapper postMapper = mock(PostMapper.class);
-        when(postMapper.findVisiblePostIds(anyList(), isNull(), isNull(), isNull(), isNull(), isNull())).thenReturn(List.of(3L, 2L));
+        when(postMapper.findOnSalePostIds()).thenReturn(List.of(3L, 2L));
         PostSearchReranker reranker = mock(PostSearchReranker.class);
         when(reranker.rerank(anyString(), anyList())).thenReturn(Optional.of(List.of(2L)));
         PostSearchService service = new PostSearchService(postMapper, null, provider(vectorStore), vectorService(vectorStore), MODEL, reranker);
@@ -531,5 +531,21 @@ class PostVectorSearchTest {
         // 재정렬 결과는 고른 묶음의 글 전체가 모델 순서대로 펼쳐진 목록
         assertThat(PostSearchService.chosenGroups(List.of(t1, gen, kia), List.of(3L, 4L, 1L, 2L))).containsExactly(gen, t1);
         assertThat(PostSearchService.chosenGroups(List.of(t1, gen, kia), List.of())).isEmpty();
+    }
+
+    @Test
+    void findCandidateGroups_판매중_글만_묶으면_판매완료_묶음이_자리를_차지하지_않음() {
+        // 운영처럼 판매 완료 글만 있는 묶음이 유사도 상위를 차지해도, 판매중 글로만 묶으면 limit 안에 판매중 묶음이 들어온다
+        VectorStore vectorStore = mock(VectorStore.class);
+        when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(List.of(
+                titled(1L, 0.50, "FC 서울 판매완료 a", "FC 서울"), titled(2L, 0.49, "FC 서울 판매완료 b", "FC 서울"),
+                titled(3L, 0.48, "FC 서울 판매완료 c", "FC 서울"), titled(4L, 0.30, "T1 저지", "T1"), titled(5L, 0.29, "젠지 저지", "젠지")));
+        PostVectorService service = vectorService(vectorStore);
+
+        assertThat(service.findCandidateGroups("롤 팀 유니폼", 0.0, 2)).extracting(PostVectorService.CandidateGroup::team)
+                .containsExactly("FC 서울", "FC 서울");
+        assertThat(service.findCandidateGroups("롤 팀 유니폼", 0.0, 2, List.of(4L, 5L))).extracting(PostVectorService.CandidateGroup::team)
+                .containsExactly("T1", "젠지");
+        assertThat(service.findCandidateGroups("롤 팀 유니폼", 0.0, 2, List.of())).isEmpty();
     }
 }
