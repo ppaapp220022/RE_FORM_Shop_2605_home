@@ -135,7 +135,7 @@ public class PostSearchService {
         }
         VectorStore vectorStore = vectorStoreProvider.getIfAvailable();
         if (vectorStore == null) {
-            log.warn("벡터 검색이 비활성화되어 키워드 검색만 수행합니다. query={}", query);
+            log.warn("벡터 검색이 비활성화되어 키워드 검색만 수행합니다.");
             return new ArrayList<>();
         }
         // 페이지를 넘길 때마다 재정렬을 다시 하면 모델 출력이 달라져 페이지끼리 어긋나므로, 같은 검색어는 잠시 같은 결과를 쓴다
@@ -175,7 +175,7 @@ public class PostSearchService {
             log.debug("AI 검색 query={}", query);
             return aboveThreshold(similaritySearch);
         } catch (Exception exception) {
-            log.error("벡터 검색에 실패해 키워드 검색만 수행합니다. query={}", query, exception);
+            log.error("벡터 검색에 실패해 키워드 검색만 수행합니다.", exception);
             return new ArrayList<>();
         }
     }

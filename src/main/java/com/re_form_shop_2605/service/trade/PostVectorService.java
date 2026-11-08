@@ -27,8 +27,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 /**
  * 작성자: 손민정
  * 작성일: 2026-05-13
@@ -59,7 +62,10 @@ public class PostVectorService {
     private final double similarityThreshold;
     private final double rerankCandidateThreshold;
     // 등록·수정 요청을 임베딩 호출(OpenAI)이 붙잡지 않도록 커밋 뒤 이 스레드에서 저장한다
-    private final ExecutorService saveExecutor = Executors.newSingleThreadExecutor(runnable -> {
+    //  - 임베딩이 느려 대기가 SAVE_QUEUE_SIZE건을 넘으면 받지 않고 로그만 남긴다 (전체 재임베딩으로 복구)
+    static final int SAVE_QUEUE_SIZE = 1000;
+    private final ExecutorService saveExecutor = new ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS,
+            new ArrayBlockingQueue<>(SAVE_QUEUE_SIZE), runnable -> {
         Thread thread = new Thread(runnable, "post-embed");
         thread.setDaemon(true);
         return thread;
@@ -98,9 +104,13 @@ public class PostVectorService {
         return rerankCandidateThreshold;
     }
 
+    // 배포로 재시작할 때 대기 중인 저장을 잠시 기다려, 커밋된 글의 벡터가 조용히 빠지지 않게 한다
     @PreDestroy
-    void shutdown() {
+    void shutdown() throws InterruptedException {
         saveExecutor.shutdown();
+        if (!saveExecutor.awaitTermination(10, TimeUnit.SECONDS)) {
+            log.warn("벡터 저장 대기 {}건을 마치지 못하고 종료합니다. 재임베딩으로 복구하세요.", saveExecutor.shutdownNow().size());
+        }
     }
 
     /* 판매글 등록·수정 트랜잭션이 커밋된 뒤 다른 스레드에서 벡터 저장 */
@@ -118,7 +128,14 @@ public class PostVectorService {
                 .content(post.getContent())
                 .price(post.getPrice())
                 .build();
-        Runnable save = () -> saveExecutor.execute(() -> savePostVector(copy));
+        // 작업을 받지 못해도(종료 중·대기 초과) 이미 커밋된 요청을 실패시키지 않도록 로그만 남긴다
+        Runnable save = () -> {
+            try {
+                saveExecutor.execute(() -> savePostVector(copy));
+            } catch (RejectedExecutionException exception) {
+                log.warn("savePostVectorAfterCommit : 벡터 저장을 받지 못했습니다. 재임베딩으로 복구하세요  |  postId {}", copy.getPostId());
+            }
+        };
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
@@ -271,14 +288,14 @@ public class PostVectorService {
         }
         EmbeddingModel model = embeddingModelProvider.getIfUnique();
         if (model == null) {
-            log.warn("findCandidateGroups : 임베딩 모델을 하나로 고를 수 없어 상위 {}건만 묶습니다  |  query={}", FALLBACK_TOP_K, query);
+            log.warn("findCandidateGroups : 임베딩 모델을 하나로 고를 수 없어 상위 {}건만 묶습니다", FALLBACK_TOP_K);
             return groupInMemory(vectorStore, query, threshold, limit, FALLBACK_TOP_K);
         }
         float[] queryEmbedding = model.embed(query);
         try {
             return groupsBySql(new JdbcTemplate(dataSource), queryEmbedding, threshold, limit);
         } catch (RuntimeException exception) {
-            log.error("findCandidateGroups : 묶음 집계 SQL 실패, 상위 {}건만 묶습니다  |  query={}", FALLBACK_TOP_K, query, exception);
+            log.error("findCandidateGroups : 묶음 집계 SQL 실패, 상위 {}건만 묶습니다", FALLBACK_TOP_K, exception);
             return groupInMemory(vectorStore, query, threshold, limit, FALLBACK_TOP_K);
         }
     }
