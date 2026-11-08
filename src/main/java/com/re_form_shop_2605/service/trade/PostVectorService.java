@@ -2,7 +2,9 @@ package com.re_form_shop_2605.service.trade;
 
 import com.re_form_shop_2605.entity.Enum.Sport;
 import com.re_form_shop_2605.entity.trade.Post;
+import com.pgvector.PGvector;
 import lombok.extern.log4j.Log4j2;
+import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.ObjectProvider;
@@ -15,6 +17,9 @@ import org.springframework.ai.document.Document;
 
 import javax.sql.DataSource;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -31,16 +36,23 @@ public class PostVectorService {
     private static final String MODEL_KEY = "embeddingModel";
     static final int MAX_CONTENT_LENGTH = 1000;
     static final int MAX_CONSECUTIVE_FAILURES = 3;
+    // PG가 없을 때(메모리 벡터 저장소 - eval·테스트) 그룹을 빠짐없이 모으려고 전부 받아 묶는다
+    static final int IN_MEMORY_TOP_K = 10_000;
+    // 그룹 집계 SQL이 실패하면 이만큼만 받아 Java에서 묶는다 (예전 방식)
+    static final int FALLBACK_TOP_K = 100;
 
     private final ObjectProvider<VectorStore> vectorStoreProvider;
     private final ObjectProvider<DataSource> postgresDataSourceProvider;
+    private final ObjectProvider<EmbeddingModel> embeddingModelProvider;
     private final String embeddingModel;
 
     public PostVectorService(ObjectProvider<VectorStore> vectorStoreProvider,
                              @Qualifier("postgresDataSource") ObjectProvider<DataSource> postgresDataSourceProvider,
+                             ObjectProvider<EmbeddingModel> embeddingModelProvider,
                              @Value("${spring.ai.openai.embedding.options.model:text-embedding-3-small}") String embeddingModel) {
         this.vectorStoreProvider = vectorStoreProvider;
         this.postgresDataSourceProvider = postgresDataSourceProvider;
+        this.embeddingModelProvider = embeddingModelProvider;
         this.embeddingModel = embeddingModel;
     }
 
@@ -134,6 +146,121 @@ public class PostVectorService {
     public record SearchCheck(int matched, Double topScore) {
     }
 
+    /* 제목·종목·팀이 같은 글 묶음 - postIds는 유사도 높은 순, scores는 postIds와 같은 순서의 유사도 */
+    public record CandidateGroup(String title, String sport, String team, List<Long> postIds, List<Double> scores) {
+
+        /* 묶음에서 가장 높은 유사도 */
+        public double score() {
+            return scores.get(0);
+        }
+
+        /* 유사도가 threshold 이상인 글만 */
+        public List<Long> postIdsAbove(double threshold) {
+            List<Long> above = new ArrayList<>();
+            for (int i = 0; i < postIds.size(); i++) {
+                if (scores.get(i) >= threshold) {
+                    above.add(postIds.get(i));
+                }
+            }
+            return above;
+        }
+
+        /* 남길 글만 고른 묶음 (유사도 순서 유지) */
+        public CandidateGroup retain(java.util.function.Predicate<Long> keep) {
+            List<Long> keptIds = new ArrayList<>();
+            List<Double> keptScores = new ArrayList<>();
+            for (int i = 0; i < postIds.size(); i++) {
+                if (keep.test(postIds.get(i))) {
+                    keptIds.add(postIds.get(i));
+                    keptScores.add(scores.get(i));
+                }
+            }
+            return new CandidateGroup(title, sport, team, keptIds, keptScores);
+        }
+    }
+
+    /* 유사도가 threshold 이상인 글을 제목·종목·팀으로 묶어, 묶음 최고 유사도 순으로 최대 limit개 반환 (재정렬 후보용) */
+    // 같은 글을 수십~수백 번 올리면 벡터 상위 N건을 한두 묶음이 다 차지해 다른 상품이 후보에서 빠진다
+    //  - PG에서는 묶음 집계를 SQL로 한 번에 한다 (전체 스캔이지만 판매글 수천 건 규모에선 수 ms)
+    //  - SQL 실행이 실패하면 예전처럼 상위 FALLBACK_TOP_K건만 받아 Java에서 묶는다
+    //    (검색어 임베딩 실패는 대체 경로도 같은 호출을 다시 하므로 그대로 던진다)
+    //  - PG가 없으면(메모리 저장소) 전부 받아 Java에서 묶는다
+    public List<CandidateGroup> findCandidateGroups(String query, double threshold, int limit) {
+        VectorStore vectorStore = vectorStoreProvider.getIfAvailable();
+        if (vectorStore == null) {
+            throw new IllegalStateException("벡터 저장소가 비활성화되어 있습니다.");
+        }
+        DataSource dataSource = postgresDataSourceProvider.getIfAvailable();
+        if (dataSource == null) {
+            return groupInMemory(vectorStore, query, threshold, limit, IN_MEMORY_TOP_K);
+        }
+        EmbeddingModel model = embeddingModelProvider.getIfUnique();
+        if (model == null) {
+            log.warn("findCandidateGroups : 임베딩 모델을 하나로 고를 수 없어 상위 {}건만 묶습니다  |  query={}", FALLBACK_TOP_K, query);
+            return groupInMemory(vectorStore, query, threshold, limit, FALLBACK_TOP_K);
+        }
+        float[] queryEmbedding = model.embed(query);
+        try {
+            return groupsBySql(new JdbcTemplate(dataSource), queryEmbedding, threshold, limit);
+        } catch (RuntimeException exception) {
+            log.error("findCandidateGroups : 묶음 집계 SQL 실패, 상위 {}건만 묶습니다  |  query={}", FALLBACK_TOP_K, query, exception);
+            return groupInMemory(vectorStore, query, threshold, limit, FALLBACK_TOP_K);
+        }
+    }
+
+    private List<CandidateGroup> groupsBySql(JdbcTemplate jdbcTemplate, float[] queryEmbedding, double threshold, int limit) {
+        PGvector vector = new PGvector(queryEmbedding);
+        return jdbcTemplate.query("""
+                        SELECT title, sport, team, MIN(distance) AS distance,
+                               string_agg(post_id, ',' ORDER BY distance, post_id) AS post_ids,
+                               string_agg((1 - distance)::text, ',' ORDER BY distance, post_id) AS scores
+                        FROM (SELECT metadata->>'title' AS title, metadata->>'sport' AS sport, metadata->>'team' AS team,
+                                     metadata->>'postId' AS post_id, embedding <=> ? AS distance
+                              FROM %s
+                              WHERE metadata->>'%s' = ? AND metadata->>'postId' IS NOT NULL) v
+                        WHERE distance <= ?
+                        GROUP BY title, sport, team
+                        ORDER BY MIN(distance)
+                        LIMIT ?
+                        """.formatted(VECTOR_TABLE, MODEL_KEY),
+                (rs, rowNum) -> new CandidateGroup(rs.getString("title"), rs.getString("sport"), rs.getString("team"),
+                        Arrays.stream(rs.getString("post_ids").split(",")).map(Long::parseLong).toList(),
+                        Arrays.stream(rs.getString("scores").split(",")).map(Double::parseDouble).toList()),
+                vector, embeddingModel, 1 - threshold, limit);
+    }
+
+    private List<CandidateGroup> groupInMemory(VectorStore vectorStore, String query, double threshold, int limit, int topK) {
+        List<Document> results = vectorStore.similaritySearch(SearchRequest.builder()
+                .query(query)
+                .topK(topK)
+                .similarityThreshold(threshold)
+                .filterExpression(modelFilter(embeddingModel))
+                .build());
+        return groupDocuments(results, limit);
+    }
+
+    /* 유사도 순 결과를 SQL과 같은 기준(제목·종목·팀)으로 묶는다 - 처음 나온 순서(= 묶음 최고 유사도 순) 유지, postId 없는 결과는 건너뜀 */
+    static List<CandidateGroup> groupDocuments(List<Document> results, int limit) {
+        Map<String, List<Document>> groups = new LinkedHashMap<>();
+        for (Document result : results) {
+            Map<String, Object> metadata = result.getMetadata();
+            if (metadata.get("postId") == null) {
+                continue;
+            }
+            String key = metadata.getOrDefault("title", "") + "|" + metadata.getOrDefault("sport", "") + "|" + metadata.getOrDefault("team", "");
+            groups.computeIfAbsent(key, k -> new ArrayList<>()).add(result);
+        }
+        return groups.values().stream().limit(limit).map(members -> {
+            Map<String, Object> metadata = members.get(0).getMetadata();
+            return new CandidateGroup(
+                    String.valueOf(metadata.getOrDefault("title", "")),
+                    String.valueOf(metadata.getOrDefault("sport", "")),
+                    String.valueOf(metadata.getOrDefault("team", "")),
+                    members.stream().map(d -> Long.parseLong(d.getMetadata().get("postId").toString())).toList(),
+                    members.stream().map(d -> d.getScore() != null ? d.getScore() : 0.0).toList());
+        }).toList();
+    }
+
     static String rootMessage(Throwable throwable) {
         Throwable root = throwable;
         while (root.getCause() != null && root.getCause() != root) {
@@ -207,6 +334,8 @@ public class PostVectorService {
             Map.entry( "대한민국 국가대표" , "국대 태극전사 한국 축구"),
             Map.entry( "수원 삼성 블루윙즈" , "수원삼성 블루윙즈 수원 K리그"),
             Map.entry( "울산 HD" , "울산 현대 울산HD K리그"),
+            Map.entry( "전북 현대" , "전북 현대 모터스 전북 K리그"),
+            Map.entry( "FC 서울" , "FC서울 서울 K리그"),
 
             // 농구
             Map.entry( "LA 레이커스" , "레이커스 코비 르브론"),
@@ -214,10 +343,14 @@ public class PostVectorService {
             Map.entry( "시카고 불스" , "불스 시카고 조던"),
             Map.entry( "보스턴 셀틱스" , "셀틱스 보스턴"),
             Map.entry( "서울 삼성 썬더스" , "삼성썬더스 서울삼성"),
+            Map.entry( "부산 KCC 이지스" , "KCC 이지스 부산 KCC KBL"),
+            Map.entry( "서울 SK 나이츠" , "SK 나이츠 서울 SK KBL"),
 
             // e스포츠
             Map.entry( "T1" , "T1 테원 페이커 SKT"),
             Map.entry( "Gen.G" , "젠지 GenG 쵸비"),
+            // 운영 데이터는 팀명을 한글로 쓴다
+            Map.entry( "젠지" , "젠지 Gen.G GenG 쵸비"),
             Map.entry( "DRX", "디알엑스 DRX"),
 
             // 배구

@@ -153,9 +153,9 @@
         )
     </select>
 
-    <!-- 4. postId 목록 총 개수 반환 -->
-    <select id="countPostsByIds" resultType="int">
-        SELECT COUNT(*) FROM post p WHERE p.status = 'ON_SALE' AND post_id IN
+    <!-- 4. postId 목록 중 화면에 나오는 글(판매중·필터 조건)의 postId -->
+    <select id="findVisiblePostIds" resultType="long">
+        SELECT p.post_id FROM post p WHERE p.status = 'ON_SALE' AND post_id IN
         <foreach collection="postIds" item="id" open="(" separator="," close=")">
             #{id}
         </foreach>

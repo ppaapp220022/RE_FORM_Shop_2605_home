@@ -30,6 +30,7 @@ public class PostSearchService {
     private final PostMapper postMapper;
     private final PostImageService postImageService;
     private final ObjectProvider<VectorStore> vectorStoreProvider;
+    private final PostVectorService vectorService;
     private final String embeddingModel;
     private final PostSearchReranker reranker;
     private final RerankCache rerankCache = new RerankCache(System::currentTimeMillis);
@@ -37,11 +38,13 @@ public class PostSearchService {
     /* reranker가 null이면 재정렬 없이 벡터 결과를 그대로 쓴다 */
     public PostSearchService(PostMapper postMapper, PostImageService postImageService,
                              ObjectProvider<VectorStore> vectorStoreProvider,
+                             PostVectorService vectorService,
                              @Value("${spring.ai.openai.embedding.options.model:text-embedding-3-small}") String embeddingModel,
                              PostSearchReranker reranker) {
         this.postMapper = postMapper;
         this.postImageService = postImageService;
         this.vectorStoreProvider = vectorStoreProvider;
+        this.vectorService = vectorService;
         this.embeddingModel = embeddingModel;
         this.reranker = reranker;
     }
@@ -52,6 +55,8 @@ public class PostSearchService {
     // 재정렬할 때는 관련 없는 글을 모델이 걸러 주므로 기준값을 낮춰 후보를 넓히고, 비용·지연을 위해 상위 몇 건만 보낸다
     public static final double RERANK_CANDIDATE_THRESHOLD = 0.25;
     public static final int RERANK_CANDIDATES = 20;
+    // 판매중이 아닌 글만 있는 묶음을 빼고도 RERANK_CANDIDATES개가 남도록 넉넉히 받는다
+    static final int RERANK_CANDIDATE_GROUPS = RERANK_CANDIDATES * 3;
     static final Duration RERANK_CACHE_TTL = Duration.ofMinutes(10);
     static final int RERANK_CACHE_SIZE = 500;
 
@@ -64,7 +69,8 @@ public class PostSearchService {
         Set<Long> postIdSet = new LinkedHashSet<>();
 
         // 1) AI 통한 유사 의미 결과 검색
-        postIdSet.addAll(findSimilarPostIds(query));
+        List<Long> similarIds = findSimilarPostIds(query);
+        postIdSet.addAll(similarIds);
 
         // 2) 키워드 검색
         List<PostCardVO> keywordResults = postMapper.findPostsByCondition(
@@ -79,9 +85,17 @@ public class PostSearchService {
             return new PageResponse<>(List.of(), 0, 0, safeSize, safePage, true, true);
         }
 
-        // 4) postIdSet 리스트 변환 후 페이징 처리
-        List<Long> postIds = new ArrayList<>(postIdSet);
-        int totalElements = postMapper.countPostsByIds(postIds, sport, condition, tradeType, minPrice, maxPrice);
+        // 4) 화면에 나오는 글(판매중·필터 조건)만 남긴 뒤 페이징 처리
+        //    벡터 결과에는 판매 완료 글이나 필터에 안 맞는 글도 섞여 있어, 거르지 않고 자르면 빈 페이지가 생긴다
+        //    키워드 결과는 이미 같은 조건으로 조회했으므로 벡터 결과 중 나머지만 확인한다
+        Set<Long> visible = new HashSet<>();
+        keywordResults.forEach(post -> visible.add(post.getPostId()));
+        List<Long> unchecked = similarIds.stream().filter(id -> !visible.contains(id)).toList();
+        if (!unchecked.isEmpty()) {
+            visible.addAll(postMapper.findVisiblePostIds(unchecked, sport, condition, tradeType, minPrice, maxPrice));
+        }
+        List<Long> postIds = postIdSet.stream().filter(visible::contains).toList();
+        int totalElements = postIds.size();
         int totalPages = totalElements == 0 ? 0 : (int) Math.ceil((double) totalElements / safeSize);
         int offset = (safePage - 1) * safeSize;
         List<Long> pageIds = postIds.stream()
@@ -135,61 +149,72 @@ public class PostSearchService {
             }
         }
         try {
+            if (reranker != null) {
+                List<PostVectorService.CandidateGroup> groups = onSaleOnly(
+                        vectorService.findCandidateGroups(query, RERANK_CANDIDATE_THRESHOLD, RERANK_CANDIDATE_GROUPS));
+                log.info("AI 검색 재정렬 후보 {}묶음, 최고 점수 {} | query={}",
+                        groups.size(), groups.isEmpty() ? null : groups.get(0).score(), query);
+                groups.forEach(group -> log.debug("AI 검색 재정렬 후보 {} | {} | score {} | {}건",
+                        group.team(), group.title(), group.score(), group.postIds().size()));
+                Optional<List<Long>> reranked = rerank(query, groups);
+                // 재정렬이 실패하면 캐시하지 않고 운영 기준값으로 거른 유사도 순 결과로 돌아간다
+                reranked.ifPresent(postIds -> rerankCache.put(cacheKey, postIds));
+                return new ArrayList<>(reranked.orElseGet(() -> groupsAboveThreshold(groups)));
+            }
             List<Document> similaritySearch = vectorStore.similaritySearch(
                     SearchRequest.builder()
                             .query(query)
                             .topK(SIMILARITY_TOP_K)
-                            .similarityThreshold(reranker != null ? RERANK_CANDIDATE_THRESHOLD : SIMILARITY_THRESHOLD)
+                            .similarityThreshold(SIMILARITY_THRESHOLD)
                             // 다른 모델로 만든 벡터와의 유사도는 의미가 없으므로 현재 모델 벡터만 비교
                             .filterExpression(PostVectorService.modelFilter(embeddingModel))
                             .build());
             similaritySearch.forEach(result -> log.debug("AI 검색 결과 postId: {}, score: {}",
                     result.getMetadata().get("postId"), result.getScore()));
-            log.info("AI 검색 {} {}건, 최고 점수 {} | query={}", reranker != null ? "재정렬 후보" : "결과",
+            log.info("AI 검색 결과 {}건, 최고 점수 {} | query={}",
                     similaritySearch.size(), similaritySearch.isEmpty() ? null : similaritySearch.get(0).getScore(), query);
-            if (reranker == null) {
-                return aboveThreshold(similaritySearch);
-            }
-            Optional<List<Long>> reranked = rerank(query, similaritySearch);
-            // 재정렬이 실패하면 캐시하지 않고 운영 기준값으로 거른 유사도 순 결과로 돌아간다
-            reranked.ifPresent(postIds -> rerankCache.put(cacheKey, postIds));
-            return new ArrayList<>(reranked.orElseGet(() -> aboveThreshold(similaritySearch)));
+            return aboveThreshold(similaritySearch);
         } catch (Exception exception) {
             log.error("벡터 검색에 실패해 키워드 검색만 수행합니다. query={}", query, exception);
             return new ArrayList<>();
         }
     }
 
-    /* 제목·팀이 같은 글은 한 후보로 묶어 보내고, 고른 후보는 묶인 글을 모두 돌려준다 */
-    // 같은 상품을 여러 번 올린 글이 상위 후보 자리를 채워 다른 상품이 재정렬에서 빠지지 않도록 한다
-    private Optional<List<Long>> rerank(String query, List<Document> results) {
-        Map<String, List<Long>> groups = new LinkedHashMap<>();
-        Map<String, Document> representatives = new LinkedHashMap<>();
-        for (Document result : results) {
-            Object postId = result.getMetadata().get("postId");
-            if (postId == null) {
-                continue;
-            }
-            String key = result.getMetadata().getOrDefault("title", "") + "|" + result.getMetadata().getOrDefault("team", "");
-            groups.computeIfAbsent(key, k -> new ArrayList<>()).add(Long.parseLong(postId.toString()));
-            representatives.putIfAbsent(key, result);
+    /* 판매중인 글만 남기고, 판매중인 글이 없는 묶음은 뺀 뒤 상위 RERANK_CANDIDATES개 */
+    // 판매 완료 글만 있는 묶음을 모델이 고르면 결과가 0건이 되고, 후보 자리만 차지한다
+    //  (postMapper가 없으면 - eval·단위 테스트 - 거르지 않는다)
+    private List<PostVectorService.CandidateGroup> onSaleOnly(List<PostVectorService.CandidateGroup> groups) {
+        if (postMapper == null || groups.isEmpty()) {
+            return groups.stream().limit(RERANK_CANDIDATES).toList();
         }
-        Map<Long, List<Long>> membersByRepresentative = new HashMap<>();
-        List<PostSearchReranker.Candidate> candidates = representatives.entrySet().stream()
+        List<Long> ids = groups.stream().flatMap(group -> group.postIds().stream()).toList();
+        Set<Long> onSale = new HashSet<>(postMapper.findVisiblePostIds(ids, null, null, null, null, null));
+        return groups.stream()
+                .map(group -> group.retain(onSale::contains))
+                .filter(group -> !group.postIds().isEmpty())
                 .limit(RERANK_CANDIDATES)
-                .map(entry -> {
-                    List<Long> members = groups.get(entry.getKey());
-                    membersByRepresentative.put(members.get(0), members);
-                    Map<String, Object> metadata = entry.getValue().getMetadata();
-                    return new PostSearchReranker.Candidate(members.get(0),
-                            String.valueOf(metadata.getOrDefault("title", "")),
-                            String.valueOf(metadata.getOrDefault("sport", "")),
-                            String.valueOf(metadata.getOrDefault("team", "")));
+                .toList();
+    }
+
+    /* 묶음마다 대표 글 하나를 후보로 보내고, 고른 후보는 묶인 글을 모두 돌려준다 */
+    private Optional<List<Long>> rerank(String query, List<PostVectorService.CandidateGroup> groups) {
+        Map<Long, List<Long>> membersByRepresentative = new HashMap<>();
+        List<PostSearchReranker.Candidate> candidates = groups.stream()
+                .map(group -> {
+                    membersByRepresentative.put(group.postIds().get(0), group.postIds());
+                    return new PostSearchReranker.Candidate(group.postIds().get(0), group.title(), group.sport(), group.team());
                 })
                 .toList();
         return reranker.rerank(query, candidates).map(chosen -> chosen.stream()
                 .flatMap(representative -> membersByRepresentative.getOrDefault(representative, List.of(representative)).stream())
                 .toList());
+    }
+
+    /* 재정렬이 실패했을 때 - 운영 기준값 이상인 글만, 묶음 최고 유사도 순 */
+    private static List<Long> groupsAboveThreshold(List<PostVectorService.CandidateGroup> groups) {
+        return groups.stream()
+                .flatMap(group -> group.postIdsAbove(SIMILARITY_THRESHOLD).stream())
+                .toList();
     }
 
     private static List<Long> aboveThreshold(List<Document> results) {

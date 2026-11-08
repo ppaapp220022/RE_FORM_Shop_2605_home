@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.ai.document.Document;
+import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiEmbeddingModel;
@@ -59,6 +60,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *  - 기준치는 -Peval.search.minRecallAt10=0.8 처럼 넘겼을 때만 검사
  *  - 임베딩 모델 비교는 -Peval.search.embeddingModel=text-embedding-3-small (차원은 PGVector 컬럼과 같은 1536으로 고정)
  *    유사도 기준값 비교도 같이 하려면 -Peval.search.threshold=0.3 (기본은 운영 기준값)
+ *  - 운영 데이터셋은 -Peval.search.dataset=prod (SearchEvalCase 참고). 리포트 파일 이름에 데이터셋이 붙는다
  * ─────────────────────────────────────────────────────
  */
 @Log4j2
@@ -94,8 +96,12 @@ class SemanticSearchEvalTest {
 
         List<Post> posts = SearchEvalCase.loadPosts();
         PostVectorService vectorService = new PostVectorService(provider,
-                new StaticListableBeanFactory().getBeanProvider(DataSource.class), model);
-        posts.forEach(vectorService::savePostVector);
+                new StaticListableBeanFactory().getBeanProvider(DataSource.class),
+                new StaticListableBeanFactory().getBeanProvider(EmbeddingModel.class), model);
+        // 글마다 임베딩 API를 부르면 운영 데이터셋(1000건)이 몇 분 걸리므로 재임베딩처럼 묶어 저장한다
+        for (int from = 0; from < posts.size(); from += 100) {
+            vectorService.savePostVectors(posts.subList(from, Math.min(from + 100, posts.size())));
+        }
         // savePostVector는 저장 실패를 로그로만 남기므로 실제로 다 들어갔는지 확인한다
         int stored = vectorStore.similaritySearch(SearchRequest.builder().query("유니폼").topK(posts.size()).build()).size();
         assertEquals(posts.size(), stored, "임베딩 저장에 실패한 판매글이 있습니다. 다시 실행해주세요.");
@@ -103,7 +109,7 @@ class SemanticSearchEvalTest {
         // 운영처럼 채팅 모델로 재정렬한다. -Peval.search.rerank=false면 벡터 결과만 (재정렬 전후 비교용)
         boolean rerank = Boolean.parseBoolean(System.getProperty("eval.search.rerank", "true"));
         PostSearchReranker reranker = rerank ? new PostSearchReranker(ChatClient.builder(OpenAiChatModel.builder().build())) : null;
-        PostSearchService searchService = new PostSearchService(null, null, provider, model, reranker);
+        PostSearchService searchService = new PostSearchService(null, null, provider, vectorService, model, reranker);
         List<Row> rows = new ArrayList<>();
         // 모델마다 유사도 분포가 달라 운영 기준값(0.7)이 맞지 않을 수 있으므로, 넘겼을 때는 그 기준값으로 자른다
         String thresholdOverride = System.getProperty("eval.search.threshold");
@@ -118,7 +124,8 @@ class SemanticSearchEvalTest {
             rows.add(new Row(evalCase, vector, hybrid(vector, evalCase.query(), posts), scores));
         }
 
-        String summary = summarize(rows, embeddingModel.getOptions().getModel(), reranker != null, threshold);
+        String summary = "dataset=" + SearchEvalCase.dataset() + " "
+                + summarize(rows, embeddingModel.getOptions().getModel(), reranker != null, threshold);
         Path path = write(rows, posts, summary);
         log.info("[Eval] {}", summary);
         log.info("[Eval] report={}", path);
@@ -290,7 +297,8 @@ class SemanticSearchEvalTest {
         try {
             Path dir = Path.of(System.getProperty("eval.reportDir", "build/reports/eval"));
             Files.createDirectories(dir);
-            Path file = dir.resolve("semantic-search.md");
+            String dataset = SearchEvalCase.dataset();
+            Path file = dir.resolve("default".equals(dataset) ? "semantic-search.md" : "semantic-search-" + dataset + ".md");
             Files.writeString(file, md.toString(), StandardCharsets.UTF_8);
             return file.toAbsolutePath();
         } catch (IOException e) {
