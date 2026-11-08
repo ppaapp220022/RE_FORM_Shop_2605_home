@@ -351,7 +351,7 @@ class PostVectorSearchTest {
         when(reranker.rerank(anyString(), anyList())).thenReturn(Optional.empty(), Optional.of(List.of(2L)));
         PostSearchService service = rerankingService(vectorStore, reranker);
 
-        // 후보를 넓히려고 낮춘 기준값(0.25) 결과는 재정렬 없이 내보내지 않는다
+        // 운영 기준값(0.30) 미만은 재정렬 후보로만 쓰고, 재정렬 없이 내보내지 않는다
         assertThat(service.findSimilarPostIds("기아")).containsExactly(3L, 1L);
         assertThat(service.findSimilarPostIds("기아")).containsExactly(2L);
     }
