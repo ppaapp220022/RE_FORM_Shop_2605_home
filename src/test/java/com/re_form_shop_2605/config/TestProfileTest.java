@@ -22,11 +22,12 @@ class TestProfileTest {
     @Test
     void main_설정은_그대로_쓰고_test_프로필_값으로_덮어씀() {
         assertThat(environment.getActiveProfiles()).containsExactly("test");
-        // main에만 있는 값
+        // main에만 있는 값 (튜닝으로 바뀌는 값은 비교하지 않고 있는지만 본다)
         assertThat(environment.getProperty("spring.data.redis.timeout")).isEqualTo("2s");
-        assertThat(environment.getProperty("app.ai.search.similarity-threshold")).isEqualTo("0.30");
+        assertThat(environment.getProperty("app.ai.search.similarity-threshold")).isNotBlank();
         // test 프로필이 덮어쓴 값
         assertThat(environment.getProperty("spring.datasource.url")).startsWith("jdbc:h2:mem:");
         assertThat(environment.getProperty("app.ai.vector.enabled")).isEqualTo("false");
+        assertThat(environment.getProperty("spring.data.redis.host")).isEqualTo("localhost");
     }
 }
