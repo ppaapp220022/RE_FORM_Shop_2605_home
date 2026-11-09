@@ -2,6 +2,7 @@ package com.re_form_shop_2605.service.trade;
 
 import com.re_form_shop_2605.dto.common.PageResponse;
 import com.re_form_shop_2605.dto.trade.PostCardDTO;
+import com.re_form_shop_2605.entity.Enum.PostStatus;
 import com.re_form_shop_2605.entity.Enum.Sport;
 import com.re_form_shop_2605.mapper.trade.PostMapper;
 import com.re_form_shop_2605.entity.trade.Post;
@@ -17,6 +18,8 @@ import org.springframework.beans.factory.support.StaticListableBeanFactory;
 
 import javax.sql.DataSource;
 
+import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
@@ -66,7 +69,7 @@ class PostVectorSearchTest {
 
     private static Post post(long postId) {
         return Post.builder().postId(postId).title("KIA 타이거즈 홈 유니폼").sport(Sport.BASEBALL)
-                .team("KIA 타이거즈").uniformName("2024 홈").content("사이즈 100").price(50000).build();
+                .team("KIA 타이거즈").uniformName("2024 홈").content("사이즈 100").price(50000).status(PostStatus.ON_SALE).build();
     }
 
     private static Document result(Object postId, double score) {
@@ -89,7 +92,10 @@ class PostVectorSearchTest {
         assertThat(saved.getId()).isEqualTo(PostVectorService.documentId(7L));
         assertThat(saved.getId()).isNotEqualTo(PostVectorService.documentId(8L));
         assertThat(saved.getMetadata()).containsEntry("postId", "7").containsEntry("sport", "BASEBALL")
-                .containsEntry("embeddingModel", MODEL);
+                .containsEntry("status", "ON_SALE").containsEntry("embeddingModel", MODEL);
+        // 판매 상태는 수시로 바뀌므로 임베딩하는 글에는 넣지 않는다 (나머지 메타데이터는 예전과 같이 들어간다)
+        assertThat(saved.getFormattedContent(org.springframework.ai.document.MetadataMode.EMBED))
+                .doesNotContain("ON_SALE").contains("postId: 7");
         assertThat(saved.getText()).contains("KIA 타이거즈", "기아");
     }
 
@@ -234,9 +240,9 @@ class PostVectorSearchTest {
         verify(vectorStore).similaritySearch(captor.capture());
         assertThat(captor.getValue().getSimilarityThreshold()).isEqualTo(PostVectorService.DEFAULT_SIMILARITY_THRESHOLD);
         assertThat(captor.getValue().getTopK()).isEqualTo(PostSearchService.SIMILARITY_TOP_K);
-        // 다른 모델로 만든 벡터와 비교하지 않도록 현재 모델 벡터만 고른다
+        // 다른 모델로 만든 벡터와 비교하지 않도록 현재 모델 벡터만, 판매중인 글만 고른다
         assertThat(captor.getValue().getFilterExpression())
-                .isEqualTo(new FilterExpressionTextParser().parse(PostVectorService.modelFilter(MODEL)));
+                .isEqualTo(new FilterExpressionTextParser().parse(PostVectorService.onSaleFilter(MODEL)));
     }
 
     @Test
@@ -395,26 +401,6 @@ class PostVectorSearchTest {
     }
 
     @Test
-    void findSimilarPostIds_판매중인_글이_없는_묶음은_후보에서_빼고_묶음_안에서도_판매중만() {
-        VectorStore vectorStore = mock(VectorStore.class);
-        when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(List.of(
-                titled(1L, 0.40, "T1 저지", "T1"), titled(2L, 0.40, "T1 저지", "T1"), titled(3L, 0.40, "T1 저지", "T1"),
-                titled(4L, 0.35, "젠지 저지", "젠지")));
-        PostMapper postMapper = mock(PostMapper.class);
-        when(postMapper.findOnSalePostIds()).thenReturn(List.of(3L, 2L));
-        PostSearchReranker reranker = mock(PostSearchReranker.class);
-        when(reranker.rerank(anyString(), anyList())).thenReturn(Optional.of(List.of(2L)));
-        PostSearchService service = new PostSearchService(postMapper, null, provider(vectorStore), vectorService(vectorStore), MODEL, reranker);
-
-        assertThat(service.findSimilarPostIds("롤 팀 유니폼")).containsExactly(2L, 3L);
-
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<PostSearchReranker.Candidate>> candidates = ArgumentCaptor.forClass(List.class);
-        verify(reranker).rerank(anyString(), candidates.capture());
-        assertThat(candidates.getValue()).extracting(PostSearchReranker.Candidate::postId).containsExactly(2L);
-    }
-
-    @Test
     void findCandidateGroups_묶음_SQL이_실패하면_상위_일부만_받아_묶음() throws SQLException {
         VectorStore vectorStore = mock(VectorStore.class);
         when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(List.of(titled(1L, 0.4, "a", "x")));
@@ -432,6 +418,9 @@ class PostVectorSearchTest {
         ArgumentCaptor<SearchRequest> request = ArgumentCaptor.forClass(SearchRequest.class);
         verify(vectorStore).similaritySearch(request.capture());
         assertThat(request.getValue().getTopK()).isEqualTo(PostVectorService.FALLBACK_TOP_K);
+        // 대체 경로도 판매중 글로 먼저 거른다 - 판매 완료 글이 상위 FALLBACK_TOP_K건을 차지하지 않도록
+        assertThat(request.getValue().getFilterExpression())
+                .isEqualTo(new FilterExpressionTextParser().parse(PostVectorService.onSaleFilter(MODEL)));
     }
 
     @Test
@@ -534,18 +523,74 @@ class PostVectorSearchTest {
     }
 
     @Test
-    void findCandidateGroups_판매중_글만_묶으면_판매완료_묶음이_자리를_차지하지_않음() {
-        // 운영처럼 판매 완료 글만 있는 묶음이 유사도 상위를 차지해도, 판매중 글로만 묶으면 limit 안에 판매중 묶음이 들어온다
+    void findCandidateGroups_판매중_글만_고르는_필터로_묶음() {
+        // 운영처럼 판매 완료 글만 있는 묶음이 유사도 상위를 차지하지 않도록 벡터 메타데이터의 판매 상태로 먼저 거른다
         VectorStore vectorStore = mock(VectorStore.class);
         when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(List.of(
-                titled(1L, 0.50, "FC 서울 판매완료 a", "FC 서울"), titled(2L, 0.49, "FC 서울 판매완료 b", "FC 서울"),
-                titled(3L, 0.48, "FC 서울 판매완료 c", "FC 서울"), titled(4L, 0.30, "T1 저지", "T1"), titled(5L, 0.29, "젠지 저지", "젠지")));
-        PostVectorService service = vectorService(vectorStore);
+                titled(4L, 0.30, "T1 저지", "T1"), titled(5L, 0.29, "젠지 저지", "젠지")));
 
-        assertThat(service.findCandidateGroups("롤 팀 유니폼", 0.0, 2)).extracting(PostVectorService.CandidateGroup::team)
-                .containsExactly("FC 서울", "FC 서울");
-        assertThat(service.findCandidateGroups("롤 팀 유니폼", 0.0, 2, List.of(4L, 5L))).extracting(PostVectorService.CandidateGroup::team)
-                .containsExactly("T1", "젠지");
-        assertThat(service.findCandidateGroups("롤 팀 유니폼", 0.0, 2, List.of())).isEmpty();
+        assertThat(vectorService(vectorStore).findCandidateGroups("롤 팀 유니폼", 0.0, 2))
+                .extracting(PostVectorService.CandidateGroup::team).containsExactly("T1", "젠지");
+
+        ArgumentCaptor<SearchRequest> request = ArgumentCaptor.forClass(SearchRequest.class);
+        verify(vectorStore).similaritySearch(request.capture());
+        assertThat(request.getValue().getFilterExpression())
+                .isEqualTo(new FilterExpressionTextParser().parse(PostVectorService.onSaleFilter(MODEL)));
+    }
+
+    @Test
+    void updateStatusAfterCommit_커밋된_뒤_postId와_상태를_배열로_넘겨_메타데이터만_바꿈() throws SQLException {
+        DataSource dataSource = mock(DataSource.class);
+        Connection connection = mock(Connection.class);
+        PreparedStatement statement = mock(PreparedStatement.class);
+        when(dataSource.getConnection()).thenReturn(connection);
+        when(connection.prepareStatement(anyString())).thenReturn(statement);
+        when(statement.executeUpdate()).thenReturn(1);
+        VectorStore vectorStore = mock(VectorStore.class);
+        PostVectorService service = new PostVectorService(provider(vectorStore),
+                new StaticListableBeanFactory(Map.of("postgresDataSource", dataSource)).getBeanProvider(DataSource.class),
+                new StaticListableBeanFactory().getBeanProvider(EmbeddingModel.class), MODEL);
+
+        org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+        try {
+            service.updateStatusAfterCommit(7L, PostStatus.SOLD);
+            verify(connection, never()).prepareStatement(anyString());
+
+            org.springframework.transaction.support.TransactionSynchronizationManager.getSynchronizations()
+                    .forEach(org.springframework.transaction.support.TransactionSynchronization::afterCommit);
+        } finally {
+            org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
+        }
+
+        verify(statement, timeout(2000)).executeUpdate();
+        verify(connection).prepareStatement(argThat(sql -> sql.contains("jsonb_set") && sql.contains("'{status}'")));
+        verify(statement).setString(1, "{7}");
+        verify(statement).setString(2, "{SOLD}");
+        // 임베딩은 다시 만들지 않는다
+        verify(vectorStore, never()).add(anyList());
+    }
+
+    @Test
+    void syncStatuses_PG가_없으면_원본을_읽지_않음() {
+        java.util.function.Supplier<Map<Long, PostStatus>> statuses = () -> {
+            throw new AssertionError("PG가 없으면 원본을 읽지 않아야 함");
+        };
+
+        vectorService(mock(VectorStore.class)).syncStatuses(statuses);
+    }
+
+    @Test
+    void 판매_상태가_실제로_바뀔_때만_벡터_반영_표시() {
+        Post post = post(1L);
+
+        post.changeStatus(PostStatus.ON_SALE);
+        assertThat(post.consumeStatusChange()).isFalse();
+
+        post.changeStatus(PostStatus.SOLD);
+        assertThat(post.consumeStatusChange()).isTrue();
+        assertThat(post.consumeStatusChange()).isFalse();
+
+        post.markDeleted();
+        assertThat(post.consumeStatusChange()).isTrue();
     }
 }

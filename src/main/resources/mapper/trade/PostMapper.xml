@@ -175,8 +175,4 @@
             AND p.price &lt;= #{maxPrice}
         </if>
     </select>
-
-    <select id="findOnSalePostIds" resultType="long">
-        SELECT post_id FROM post WHERE status = 'ON_SALE'
-    </select>
 </mapper>

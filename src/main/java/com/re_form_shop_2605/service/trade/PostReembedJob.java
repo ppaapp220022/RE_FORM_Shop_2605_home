@@ -1,9 +1,13 @@
 package com.re_form_shop_2605.service.trade;
 
+import com.re_form_shop_2605.entity.Enum.PostStatus;
 import com.re_form_shop_2605.entity.trade.Post;
 import com.re_form_shop_2605.repository.trade.PostRepository;
+import com.re_form_shop_2605.repository.trade.projection.PostStatusProjection;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.log4j.Log4j2;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
@@ -11,10 +15,12 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 
 /**
  * ─────────────────────────────────────────────────────
@@ -24,6 +30,7 @@ import java.util.concurrent.atomic.AtomicReference;
  *  - 실패 없이 끝났을 때만 이전 모델 벡터를 지운다 (실패가 있으면 이전 모델로 롤백할 수 있게 남겨 둔다)
  *  - 끝나면 운영 기준값으로 실제 검색이 되는지 확인해 결과를 남긴다
  *    (검색 실패는 PostSearchService가 빈 결과로 삼키므로 여기서 확인해야 원인이 보인다)
+ *  - 서버가 뜰 때와 재임베딩이 끝난 뒤 벡터 메타데이터의 판매 상태를 판매글 DB와 맞춘다 (임베딩 호출 없음)
  * ─────────────────────────────────────────────────────
  */
 @Log4j2
@@ -64,6 +71,17 @@ public class PostReembedJob {
 
     public Status status() {
         return status.get();
+    }
+
+    /* 서버가 뜨면 벡터 메타데이터의 판매 상태를 맞춘다 - 상태 값이 없는 예전 벡터나 재시작 중에 놓친 상태 변경을 바로잡는다 */
+    @EventListener(ApplicationReadyEvent.class)
+    public void syncStatusesOnStartup() {
+        postVectorService.syncStatuses(this::currentStatuses);
+    }
+
+    private Map<Long, PostStatus> currentStatuses() {
+        return postRepository.findAllStatuses().stream()
+                .collect(Collectors.toMap(PostStatusProjection::getPostId, PostStatusProjection::getStatus));
     }
 
     /* 재임베딩 시작 - 이미 실행 중이면 false */
@@ -135,6 +153,9 @@ public class PostReembedJob {
             status.updateAndGet(s -> new Status(State.FAILED, s.total(), s.processed(), s.embedded(), s.failed(),
                     s.cleanup(), s.searchCheck(), PostVectorService.rootMessage(exception), s.startedAt(),
                     LocalDateTime.now(), null));
+        } finally {
+            // 묶음을 읽은 뒤 바뀐 판매 상태를 재임베딩이 예전 값으로 덮었을 수 있어 끝나면 다시 맞춘다
+            postVectorService.syncStatuses(this::currentStatuses);
         }
     }
 

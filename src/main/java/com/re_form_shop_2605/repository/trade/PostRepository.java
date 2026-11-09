@@ -3,6 +3,7 @@ package com.re_form_shop_2605.repository.trade;
 import com.re_form_shop_2605.entity.Enum.PostStatus;
 import com.re_form_shop_2605.entity.trade.Post;
 import com.re_form_shop_2605.repository.trade.projection.AdminPostListProjection;
+import com.re_form_shop_2605.repository.trade.projection.PostStatusProjection;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -37,6 +38,10 @@ public interface PostRepository extends JpaRepository<Post, Long> {
     Optional<Post> findWithSellerIdByPostId(Long postId);
 
     List<Post> findAllByStatusNotIn(List<PostStatus> statuses);
+
+    /* 전체 판매글의 판매 상태 (벡터 메타데이터 동기화용) */
+    @Query("SELECT p.postId AS postId, p.status AS status FROM Post p")
+    List<PostStatusProjection> findAllStatuses();
 
     /**
      * ─────────────────────────────────────────────────────

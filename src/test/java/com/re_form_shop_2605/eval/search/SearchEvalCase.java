@@ -2,6 +2,7 @@ package com.re_form_shop_2605.eval.search;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.re_form_shop_2605.entity.Enum.PostStatus;
 import com.re_form_shop_2605.entity.Enum.Sport;
 import com.re_form_shop_2605.entity.trade.Post;
 
@@ -60,6 +61,7 @@ public record SearchEvalCase(String id, String tag, String query, List<Long> rel
                 .title(node.get("title").asText())
                 .content(node.get("content").asText())
                 .price(node.get("price").asInt())
+                .status(PostStatus.ON_SALE)
                 .build());
     }
 

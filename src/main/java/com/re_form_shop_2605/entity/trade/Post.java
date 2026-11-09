@@ -4,6 +4,7 @@ import com.re_form_shop_2605.entity.*;
 import com.re_form_shop_2605.entity.Enum.*;
 import com.re_form_shop_2605.entity.chat.ChatRoom;
 import com.re_form_shop_2605.entity.member.Member;
+import com.re_form_shop_2605.service.trade.PostStatusVectorListener;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.UpdateTimestamp;
@@ -25,6 +26,7 @@ import java.util.List;
  * 설명: 게시글 JPA 엔티티
  * ─────────────────────────────────────────────────────
  */
+@EntityListeners(PostStatusVectorListener.class)
 public class Post extends BaseEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -103,6 +105,10 @@ public class Post extends BaseEntity {
     @OneToOne(mappedBy = "post", fetch = FetchType.LAZY)
     private Trade trade;
 
+    // 판매 상태가 바뀌었는지 - 저장된 뒤 벡터 메타데이터의 상태도 바꾸도록 PostStatusVectorListener가 읽고 지운다
+    @Transient
+    private boolean statusChanged;
+
     public void changePost(String title, String content, Sport sport, String team, String uniformName,
                            Grade grade, String size, Boolean marking, Integer price, DeliveryType deliveryType) {
         if (title != null) {
@@ -138,11 +144,21 @@ public class Post extends BaseEntity {
     }
 
     public void markDeleted() {
-        this.status = PostStatus.DELETED;
+        changeStatus(PostStatus.DELETED);
     }
 
     public void changeStatus(PostStatus status) {
+        if (this.status != status) {
+            this.statusChanged = true;
+        }
         this.status = status;
+    }
+
+    /* 판매 상태가 바뀌었으면 true를 돌려주고 표시를 지운다 */
+    public boolean consumeStatusChange() {
+        boolean changed = statusChanged;
+        statusChanged = false;
+        return changed;
     }
 
     public void increaseWishCount() {
