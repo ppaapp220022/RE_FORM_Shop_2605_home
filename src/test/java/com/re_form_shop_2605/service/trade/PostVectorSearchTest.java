@@ -437,10 +437,28 @@ class PostVectorSearchTest {
         when(postMapper.findVisiblePostIds(anyList(), any(), any(), any(), any(), any())).thenReturn(List.of(12L, 11L));
         PostSearchService service = new PostSearchService(postMapper, null, provider(vectorStore), vectorService(vectorStore), MODEL, null);
 
-        PageResponse<PostCardDTO> page = service.search("T1", null, null, null, null, null, "latest", 1, 10, null);
+        PageResponse<PostCardDTO> page = service.search("T1", null, null, null, null, null, null, 1, 10, null);
 
         assertThat(page.totalElements()).isEqualTo(2);
         verify(postMapper).findPostsByIds(eq(List.of(11L, 12L)), any(), any(), any(), any(), any(), any());
+        verify(postMapper, never()).sortPostIds(anyList(), any());
+    }
+
+    @Test
+    void search_정렬을_고르면_걸러진_글_전체를_그_기준으로_다시_세움() {
+        // 예전에는 정렬을 골라도 의미 검색 결과가 관련도순으로 앞에 붙어 정렬 버튼이 듣지 않았다
+        VectorStore vectorStore = mock(VectorStore.class);
+        when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(List.of(result(1L, 0.5), result(2L, 0.4)));
+        PostMapper postMapper = mock(PostMapper.class);
+        when(postMapper.findPostsByCondition(anyString(), any(), any(), any(), any(), any(), any(), eq(0), eq(Integer.MAX_VALUE), any()))
+                .thenReturn(List.of());
+        when(postMapper.findVisiblePostIds(anyList(), any(), any(), any(), any(), any())).thenReturn(List.of(1L, 2L));
+        when(postMapper.sortPostIds(List.of(1L, 2L), "price_asc")).thenReturn(List.of(2L, 1L));
+        PostSearchService service = new PostSearchService(postMapper, null, provider(vectorStore), vectorService(vectorStore), MODEL, null);
+
+        service.search("T1", null, null, null, null, null, "price_asc", 1, 10, null);
+
+        verify(postMapper).findPostsByIds(eq(List.of(2L, 1L)), any(), any(), any(), any(), any(), any());
     }
 
     @Test

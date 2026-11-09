@@ -63,7 +63,8 @@ public class PostController {
             @RequestParam(required = false) Grade condition,    // 추가 (확인 후 주석 삭제)
             @RequestParam(required = false) Integer minPrice,   // 추가 (확인 후 주석 삭제)
             @RequestParam(required = false) Integer maxPrice,   // 추가 (확인 후 주석 삭제)
-            @RequestParam(defaultValue = "latest") String sort, // 추가 (확인 후 주석 삭제)
+            // 없으면 검색어 검색은 관련도순, 목록은 최신순 (latest·price_asc·price_desc·popular)
+            @RequestParam(required = false) String sort,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size
     ) {

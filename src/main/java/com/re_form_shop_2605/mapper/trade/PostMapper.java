@@ -77,4 +77,7 @@ public interface PostMapper {
                         @Param("tradeType") DeliveryType tradeType,
                         @Param("minPrice") Integer minPrice,
                         @Param("maxPrice") Integer maxPrice);
+
+    // 5. postId 목록을 목록 화면과 같은 정렬 기준(latest·price_asc·price_desc·popular)으로 다시 세운다
+    List<Long> sortPostIds(@Param("postIds") List<Long> postIds, @Param("sort") String sort);
 }
