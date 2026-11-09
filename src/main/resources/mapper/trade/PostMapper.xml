@@ -30,10 +30,6 @@
             WHERE post_id = #{postId}
     </update>
 
-    <!--    // 게시글 상태만 수정-->
-    <update id="updatePostStatus">
-            UPDATE post SET status = #{status} WHERE post_id = #{postId}
-    </update>
 
 
     <!-- ****** 검색 ****** -->
@@ -174,9 +170,5 @@
         <if test="maxPrice != null">
             AND p.price &lt;= #{maxPrice}
         </if>
-    </select>
-
-    <select id="findOnSalePostIds" resultType="long">
-        SELECT post_id FROM post WHERE status = 'ON_SALE'
     </select>
 </mapper>

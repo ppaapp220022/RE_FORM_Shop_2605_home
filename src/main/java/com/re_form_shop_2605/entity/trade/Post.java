@@ -25,6 +25,7 @@ import java.util.List;
  * 설명: 게시글 JPA 엔티티
  * ─────────────────────────────────────────────────────
  */
+@EntityListeners(PostStatusListener.class)
 public class Post extends BaseEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -103,6 +104,10 @@ public class Post extends BaseEntity {
     @OneToOne(mappedBy = "post", fetch = FetchType.LAZY)
     private Trade trade;
 
+    // 판매 상태가 바뀌었는지 - 저장되면 PostStatusListener가 읽고 지운 뒤 이벤트를 발행한다
+    @Transient
+    private boolean statusChanged;
+
     public void changePost(String title, String content, Sport sport, String team, String uniformName,
                            Grade grade, String size, Boolean marking, Integer price, DeliveryType deliveryType) {
         if (title != null) {
@@ -138,11 +143,21 @@ public class Post extends BaseEntity {
     }
 
     public void markDeleted() {
-        this.status = PostStatus.DELETED;
+        changeStatus(PostStatus.DELETED);
     }
 
     public void changeStatus(PostStatus status) {
+        if (this.status != status) {
+            this.statusChanged = true;
+        }
         this.status = status;
+    }
+
+    /* 판매 상태가 바뀌었으면 true를 돌려주고 표시를 지운다 */
+    public boolean consumeStatusChange() {
+        boolean changed = statusChanged;
+        statusChanged = false;
+        return changed;
     }
 
     public void increaseWishCount() {

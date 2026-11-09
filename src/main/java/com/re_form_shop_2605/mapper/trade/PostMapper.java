@@ -31,7 +31,6 @@ public interface PostMapper {
     int updatePost(PostVO post);
 
     // 게시글 상태만 수정
-    int updatePostStatus(@Param("postId") Long postId, @Param("status") String status);
 
 
     /**
@@ -78,7 +77,4 @@ public interface PostMapper {
                         @Param("tradeType") DeliveryType tradeType,
                         @Param("minPrice") Integer minPrice,
                         @Param("maxPrice") Integer maxPrice);
-
-    // 5. 판매중인 글 postId 전체 (재정렬 후보를 판매중 글로만 묶을 때)
-    List<Long> findOnSalePostIds();
 }
