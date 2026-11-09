@@ -4,7 +4,6 @@ import com.re_form_shop_2605.entity.*;
 import com.re_form_shop_2605.entity.Enum.*;
 import com.re_form_shop_2605.entity.chat.ChatRoom;
 import com.re_form_shop_2605.entity.member.Member;
-import com.re_form_shop_2605.service.trade.PostStatusVectorListener;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.UpdateTimestamp;
@@ -26,7 +25,7 @@ import java.util.List;
  * 설명: 게시글 JPA 엔티티
  * ─────────────────────────────────────────────────────
  */
-@EntityListeners(PostStatusVectorListener.class)
+@EntityListeners(PostStatusListener.class)
 public class Post extends BaseEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -105,7 +104,7 @@ public class Post extends BaseEntity {
     @OneToOne(mappedBy = "post", fetch = FetchType.LAZY)
     private Trade trade;
 
-    // 판매 상태가 바뀌었는지 - 저장된 뒤 벡터 메타데이터의 상태도 바꾸도록 PostStatusVectorListener가 읽고 지운다
+    // 판매 상태가 바뀌었는지 - 저장되면 PostStatusListener가 읽고 지운 뒤 이벤트를 발행한다
     @Transient
     private boolean statusChanged;
 

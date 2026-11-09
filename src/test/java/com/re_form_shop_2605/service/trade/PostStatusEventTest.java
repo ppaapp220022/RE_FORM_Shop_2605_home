@@ -13,26 +13,29 @@ import com.re_form_shop_2605.repository.trade.PostRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
+import java.util.Map;
 
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.Mockito.after;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 
 /**
  * ─────────────────────────────────────────────────────
- * 설명: 판매 상태가 바뀐 판매글이 저장되면 엔티티 리스너가 벡터 메타데이터 반영을 요청하는지 검증
- *  - 상태를 바꾸는 서비스가 여러 곳이라 리스너가 실제 JPA 저장 시점에 불리는지를 컨텍스트로 확인한다
+ * 설명: 판매 상태가 바뀐 판매글이 저장되면 커밋 뒤 벡터 메타데이터 갱신까지 이어지는지 검증
+ *  - 엔티티 리스너 → 이벤트 → 커밋 뒤 처리 → 저장 스레드로 이어지는 연결을 실제 JPA 저장으로 확인한다
+ *    (테스트에는 PG가 없어 SQL은 실행되지 않고 updateStatuses 호출까지만 본다)
  * ─────────────────────────────────────────────────────
  */
 @SpringBootTest
-class PostStatusVectorListenerTest {
+class PostStatusEventTest {
 
-    @MockitoBean
+    @MockitoSpyBean
     private PostVectorService postVectorService;
 
     @Autowired
@@ -45,13 +48,26 @@ class PostStatusVectorListenerTest {
     private TransactionTemplate transactionTemplate;
 
     @Test
-    void 판매_상태를_바꾸면_벡터_메타데이터_반영을_요청() {
+    void 판매_상태를_바꾸면_커밋_뒤_벡터_메타데이터를_갱신() {
         Long postId = createPost().getPostId();
 
         transactionTemplate.executeWithoutResult(status ->
                 postRepository.findById(postId).orElseThrow().changeStatus(PostStatus.SOLD));
 
-        verify(postVectorService).updateStatusAfterCommit(postId, PostStatus.SOLD);
+        verify(postVectorService, timeout(2000)).updateStatuses(Map.of(postId, PostStatus.SOLD));
+    }
+
+    @Test
+    void 롤백되면_갱신하지_않음() {
+        Long postId = createPost().getPostId();
+
+        transactionTemplate.executeWithoutResult(status -> {
+            postRepository.findById(postId).orElseThrow().changeStatus(PostStatus.SOLD);
+            postRepository.flush();
+            status.setRollbackOnly();
+        });
+
+        verify(postVectorService, after(500).never()).updateStatuses(anyMap());
     }
 
     @Test
@@ -61,7 +77,7 @@ class PostStatusVectorListenerTest {
         transactionTemplate.executeWithoutResult(status ->
                 postRepository.findById(postId).orElseThrow().increaseWishCount());
 
-        verify(postVectorService, never()).updateStatusAfterCommit(anyLong(), any());
+        verify(postVectorService, after(500).never()).updateStatuses(anyMap());
     }
 
     private Post createPost() {

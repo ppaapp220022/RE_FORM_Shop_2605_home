@@ -31,7 +31,6 @@ public interface PostMapper {
     int updatePost(PostVO post);
 
     // 게시글 상태만 수정
-    int updatePostStatus(@Param("postId") Long postId, @Param("status") String status);
 
 
     /**

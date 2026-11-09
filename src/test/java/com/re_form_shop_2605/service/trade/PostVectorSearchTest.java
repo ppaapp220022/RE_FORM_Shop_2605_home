@@ -538,45 +538,81 @@ class PostVectorSearchTest {
                 .isEqualTo(new FilterExpressionTextParser().parse(PostVectorService.onSaleFilter(MODEL)));
     }
 
-    @Test
-    void updateStatusAfterCommit_커밋된_뒤_postId와_상태를_배열로_넘겨_메타데이터만_바꿈() throws SQLException {
-        DataSource dataSource = mock(DataSource.class);
-        Connection connection = mock(Connection.class);
-        PreparedStatement statement = mock(PreparedStatement.class);
-        when(dataSource.getConnection()).thenReturn(connection);
-        when(connection.prepareStatement(anyString())).thenReturn(statement);
-        when(statement.executeUpdate()).thenReturn(1);
-        VectorStore vectorStore = mock(VectorStore.class);
-        PostVectorService service = new PostVectorService(provider(vectorStore),
-                new StaticListableBeanFactory(Map.of("postgresDataSource", dataSource)).getBeanProvider(DataSource.class),
-                new StaticListableBeanFactory().getBeanProvider(EmbeddingModel.class), MODEL);
-
-        org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
-        try {
-            service.updateStatusAfterCommit(7L, PostStatus.SOLD);
-            verify(connection, never()).prepareStatement(anyString());
-
-            org.springframework.transaction.support.TransactionSynchronizationManager.getSynchronizations()
-                    .forEach(org.springframework.transaction.support.TransactionSynchronization::afterCommit);
-        } finally {
-            org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
+    /* PG 연결을 흉내 내 실행된 SQL과 인자를 확인한다 */
+    private record FakePg(DataSource dataSource, Connection connection, PreparedStatement statement) {
+        static FakePg create() throws SQLException {
+            DataSource dataSource = mock(DataSource.class);
+            Connection connection = mock(Connection.class);
+            PreparedStatement statement = mock(PreparedStatement.class);
+            when(dataSource.getConnection()).thenReturn(connection);
+            when(connection.prepareStatement(anyString())).thenReturn(statement);
+            when(statement.executeUpdate()).thenReturn(1);
+            return new FakePg(dataSource, connection, statement);
         }
 
-        verify(statement, timeout(2000)).executeUpdate();
-        verify(connection).prepareStatement(argThat(sql -> sql.contains("jsonb_set") && sql.contains("'{status}'")));
-        verify(statement).setString(1, "{7}");
-        verify(statement).setString(2, "{SOLD}");
+        PostVectorService service(VectorStore vectorStore) {
+            return new PostVectorService(provider(vectorStore),
+                    new StaticListableBeanFactory(Map.of("postgresDataSource", dataSource)).getBeanProvider(DataSource.class),
+                    new StaticListableBeanFactory().getBeanProvider(EmbeddingModel.class), MODEL);
+        }
+    }
+
+    @Test
+    void onPostStatusChanged_문서_id와_상태를_배열로_넘겨_메타데이터만_바꿈() throws SQLException {
+        FakePg pg = FakePg.create();
+        VectorStore vectorStore = mock(VectorStore.class);
+
+        pg.service(vectorStore).onPostStatusChanged(new com.re_form_shop_2605.entity.trade.PostStatusChangedEvent(7L, PostStatus.SOLD));
+
+        verify(pg.statement(), timeout(2000)).executeUpdate();
+        // 기본 키(문서 id)로 찾아 전체를 훑지 않는다
+        verify(pg.connection()).prepareStatement(argThat(sql -> sql.contains("jsonb_set") && sql.contains("'{status}'")
+                && sql.contains("v.id = s.id")));
+        verify(pg.statement()).setString(1, "{" + PostVectorService.documentId(7L) + "}");
+        verify(pg.statement()).setString(2, "{SOLD}");
         // 임베딩은 다시 만들지 않는다
         verify(vectorStore, never()).add(anyList());
     }
 
     @Test
-    void syncStatuses_PG가_없으면_원본을_읽지_않음() {
-        java.util.function.Supplier<Map<Long, PostStatus>> statuses = () -> {
-            throw new AssertionError("PG가 없으면 원본을 읽지 않아야 함");
-        };
+    void syncStatuses_원본_상태로_갱신하고_원본에_없는_글은_DELETED_표시() throws SQLException {
+        FakePg pg = FakePg.create();
 
-        vectorService(mock(VectorStore.class)).syncStatuses(statuses);
+        pg.service(mock(VectorStore.class)).syncStatuses(() -> Map.of(3L, PostStatus.ON_SALE));
+
+        verify(pg.statement(), timeout(2000).times(2)).executeUpdate();
+        verify(pg.connection()).prepareStatement(argThat(sql -> sql.contains("NOT (id = ANY(?::uuid[]))")));
+        verify(pg.statement()).setString(1, "{" + PostVectorService.documentId(3L) + "}");
+        verify(pg.statement()).setString(2, "{ON_SALE}");
+        verify(pg.statement()).setString(1, "DELETED");
+        verify(pg.statement()).setString(2, "{" + PostVectorService.documentId(3L) + "}");
+        verify(pg.statement()).setString(3, "DELETED");
+    }
+
+    @Test
+    void syncStatuses_원본이_비어_있으면_전부_DELETED로_표시하지_않음() throws SQLException, InterruptedException {
+        FakePg pg = FakePg.create();
+        PostVectorService service = pg.service(mock(VectorStore.class));
+
+        service.syncStatuses(Map::of);
+        service.shutdown();
+
+        verify(pg.connection(), never()).prepareStatement(anyString());
+    }
+
+    @Test
+    void syncStatuses_PG가_없으면_원본을_읽지_않음() throws InterruptedException {
+        java.util.concurrent.atomic.AtomicBoolean read = new java.util.concurrent.atomic.AtomicBoolean();
+        PostVectorService service = vectorService(mock(VectorStore.class));
+
+        service.syncStatuses(() -> {
+            read.set(true);
+            return Map.of();
+        });
+        // 저장 스레드의 작업이 모두 끝날 때까지 기다린 뒤 확인한다
+        service.shutdown();
+
+        assertThat(read).isFalse();
     }
 
     @Test

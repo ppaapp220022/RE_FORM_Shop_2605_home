@@ -3,6 +3,7 @@ package com.re_form_shop_2605.service.trade;
 import com.re_form_shop_2605.entity.Enum.PostStatus;
 import com.re_form_shop_2605.entity.Enum.Sport;
 import com.re_form_shop_2605.entity.trade.Post;
+import com.re_form_shop_2605.entity.trade.PostStatusChangedEvent;
 import com.pgvector.PGvector;
 import lombok.extern.log4j.Log4j2;
 import org.springframework.ai.embedding.EmbeddingModel;
@@ -17,6 +18,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.event.TransactionalEventListener;
 
 import org.springframework.ai.document.DefaultContentFormatter;
 import org.springframework.ai.document.Document;
@@ -25,6 +27,7 @@ import javax.sql.DataSource;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -145,19 +148,28 @@ public class PostVectorService {
 
     /* 판매 상태가 바뀐 트랜잭션이 커밋된 뒤 벡터 메타데이터의 상태만 바꾼다 (임베딩 호출 없음) */
     //  - 등록·수정 저장과 같은 스레드에서 순서대로 실행해, 늦게 끝난 저장이 새 상태를 예전 상태로 덮지 않게 한다
-    public void updateStatusAfterCommit(Long postId, PostStatus status) {
-        runAfterCommit(() -> updateStatuses(Map.of(postId, status)), "판매 상태 반영", postId);
+    //    (그래서 임베딩이 밀려 있으면 상태 반영도 그만큼 늦어진다. 대기 초과로 버려진 변경은 기동·재임베딩 동기화로 맞춘다)
+    @TransactionalEventListener(fallbackExecution = true)
+    public void onPostStatusChanged(PostStatusChangedEvent event) {
+        enqueue(() -> updateStatuses(Map.of(event.postId(), event.status())), "판매 상태 반영", event.postId());
     }
 
     /* 벡터 메타데이터의 판매 상태를 원본(판매글 DB)과 맞춘다 - 기동할 때와 재임베딩 뒤 */
     // 상태 변경을 놓쳤거나(대기 초과·종료 중) 상태 값이 없는 예전 벡터를 바로잡는다
     //  - 원본 조회도 저장 스레드에서 해, 그 전에 대기 중이던 변경이 먼저 반영되고 조회 뒤의 변경은 동기화 다음에 반영되게 한다
+    //  - 원본에 없는 글(행이 지워졌거나 더미 데이터를 다시 넣은 경우)의 벡터는 DELETED로 표시해 후보에서 뺀다
+    //    원본이 비어 있으면 DB 연결이 잘못됐을 수 있어 전부 지운 것으로 보지 않는다
     //  - PG가 없으면(메모리 저장소 - eval·테스트) 고칠 수 없으므로 원본도 읽지 않는다
     public void syncStatuses(Supplier<Map<Long, PostStatus>> statuses) {
         if (postgresDataSourceProvider.getIfAvailable() == null) {
             return;
         }
-        enqueue(() -> log.info("syncStatuses : 벡터 판매 상태 {}건 갱신", updateStatuses(statuses.get())), "판매 상태 동기화", null);
+        enqueue(() -> {
+            Map<Long, PostStatus> current = statuses.get();
+            int updated = updateStatuses(current);
+            int missing = current.isEmpty() ? 0 : markMissingAsDeleted(current.keySet());
+            log.info("syncStatuses : 벡터 판매 상태 {}건 갱신, 원본에 없는 글 {}건 DELETED 표시", updated, missing);
+        }, "판매 상태 동기화", null);
     }
 
     /* 트랜잭션이 커밋된 뒤 저장 스레드로 넘긴다 - 트랜잭션 밖에서 부르면 바로 넘긴다 */
@@ -191,7 +203,8 @@ public class PostVectorService {
 
     /* 벡터 메타데이터의 판매 상태를 바꾸고 바뀐 벡터 수를 반환 (값이 같은 벡터는 건드리지 않는다) */
     // PgVectorStore의 metadata 컬럼은 json이라 jsonb로 바꿔 고친 뒤 저장한다 (PgVectorStore도 ?::jsonb로 넣는다)
-    //  - postId·상태는 숫자와 enum 이름만 들어가므로 배열 리터럴 '{1,2,3}'로 넘겨도 안전하다
+    //  - 문서 id(기본 키)로 찾는다. postId로 만든 고정 id라 현재 모델 벡터는 모두 이 id를 쓴다
+    //  - 문서 id(UUID)·상태는 영숫자·하이픈과 enum 이름만 들어가므로 배열 리터럴 '{a,b}'로 넘겨도 안전하다
     int updateStatuses(Map<Long, PostStatus> statuses) {
         DataSource dataSource = postgresDataSourceProvider.getIfAvailable();
         if (dataSource == null || statuses.isEmpty()) {
@@ -201,11 +214,26 @@ public class PostVectorService {
         return new JdbcTemplate(dataSource).update("""
                         UPDATE %s v
                         SET metadata = jsonb_set(v.metadata::jsonb, '{%s}', to_jsonb(s.status))
-                        FROM unnest(?::text[], ?::text[]) AS s(post_id, status)
-                        WHERE v.metadata->>'postId' = s.post_id AND v.metadata->>'%s' IS DISTINCT FROM s.status
+                        FROM unnest(?::uuid[], ?::text[]) AS s(id, status)
+                        WHERE v.id = s.id AND v.metadata->>'%s' IS DISTINCT FROM s.status
                         """.formatted(VECTOR_TABLE, STATUS_KEY, STATUS_KEY),
-                arrayLiteral(entries.stream().map(entry -> String.valueOf(entry.getKey())).toList()),
+                arrayLiteral(entries.stream().map(entry -> documentId(entry.getKey())).toList()),
                 arrayLiteral(entries.stream().map(entry -> entry.getValue().name()).toList()));
+    }
+
+    /* postIds에 없는 글의 벡터를 DELETED로 표시하고 바뀐 벡터 수를 반환 */
+    int markMissingAsDeleted(Collection<Long> postIds) {
+        DataSource dataSource = postgresDataSourceProvider.getIfAvailable();
+        if (dataSource == null) {
+            return 0;
+        }
+        String deleted = PostStatus.DELETED.name();
+        return new JdbcTemplate(dataSource).update("""
+                        UPDATE %s
+                        SET metadata = jsonb_set(metadata::jsonb, '{%s}', to_jsonb(?::text))
+                        WHERE NOT (id = ANY(?::uuid[])) AND metadata->>'%s' IS DISTINCT FROM ?
+                        """.formatted(VECTOR_TABLE, STATUS_KEY, STATUS_KEY),
+                deleted, arrayLiteral(postIds.stream().map(PostVectorService::documentId).toList()), deleted);
     }
 
     private static String arrayLiteral(List<String> values) {
@@ -330,6 +358,8 @@ public class PostVectorService {
     //  - PG가 없으면(메모리 저장소) 전부 받아 Java에서 묶는다
     // 벡터에는 판매 완료 글도 남아 있어(운영 2800건 중 1800건, 1812묶음), 전체를 묶어 상위 limit개를 자르면
     // 판매 완료 글만 있는 묶음이 자리를 다 차지해 판매중 묶음이 1~3개만 남았다 - 세 경로 모두 메타데이터의 판매 상태로 먼저 거른다
+    //  - SQL에서는 상태 값이 없는 벡터(기동 동기화 전, 또는 동기화 실패)를 판매중으로 본다. 빼면 의미 검색이 통째로 0건이 되므로,
+    //    판매 완료 글이 후보에 섞이는 편(화면에 나오는 글만 남기는 search()에서 다시 걸러진다)이 낫다
     public List<CandidateGroup> findCandidateGroups(String query, double threshold, int limit) {
         VectorStore vectorStore = vectorStoreProvider.getIfAvailable();
         if (vectorStore == null) {
@@ -361,7 +391,7 @@ public class PostVectorService {
                         FROM (SELECT metadata->>'title' AS title, metadata->>'sport' AS sport, metadata->>'team' AS team,
                                      metadata->>'postId' AS post_id, embedding <=> ? AS distance
                               FROM %s
-                              WHERE metadata->>'%s' = ? AND metadata->>'%s' = ? AND metadata->>'postId' IS NOT NULL) v
+                              WHERE metadata->>'%s' = ? AND COALESCE(metadata->>'%s', ?) = ? AND metadata->>'postId' IS NOT NULL) v
                         WHERE distance <= ?
                         GROUP BY title, sport, team
                         ORDER BY MIN(distance)
@@ -370,7 +400,7 @@ public class PostVectorService {
                 (rs, rowNum) -> new CandidateGroup(rs.getString("title"), rs.getString("sport"), rs.getString("team"),
                         Arrays.stream(rs.getString("post_ids").split(",")).map(Long::parseLong).toList(),
                         Arrays.stream(rs.getString("scores").split(",")).map(Double::parseDouble).toList()),
-                new PGvector(queryEmbedding), embeddingModel, PostStatus.ON_SALE.name(), 1 - threshold, limit);
+                new PGvector(queryEmbedding), embeddingModel, PostStatus.ON_SALE.name(), PostStatus.ON_SALE.name(), 1 - threshold, limit);
     }
 
     private List<CandidateGroup> groupInMemory(VectorStore vectorStore, String query, double threshold, int limit, int topK) {
