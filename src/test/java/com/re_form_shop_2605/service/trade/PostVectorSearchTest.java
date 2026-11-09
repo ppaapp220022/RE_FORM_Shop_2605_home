@@ -93,8 +93,8 @@ class PostVectorSearchTest {
         assertThat(saved.getId()).isNotEqualTo(PostVectorService.documentId(8L));
         assertThat(saved.getMetadata()).containsEntry("postId", "7").containsEntry("sport", "BASEBALL")
                 .containsEntry("status", "ON_SALE").containsEntry("embeddingModel", MODEL);
-        // 판매 상태·가격은 수시로 바뀌므로 임베딩하는 글에는 넣지 않는다 (메타데이터에는 남고, 나머지는 예전과 같이 들어간다)
-        assertThat(saved.getMetadata()).containsKey("price");
+        // 판매 상태는 수시로 바뀌므로 임베딩하는 글에는 넣지 않고(메타데이터에는 남는다), 가격은 아예 넣지 않는다
+        assertThat(saved.getMetadata()).doesNotContainKey("price");
         assertThat(saved.getFormattedContent(org.springframework.ai.document.MetadataMode.EMBED))
                 .doesNotContain("ON_SALE").doesNotContain("price:").contains("postId: 7");
         assertThat(saved.getText()).contains("KIA 타이거즈", "기아");
