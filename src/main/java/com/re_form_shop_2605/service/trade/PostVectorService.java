@@ -51,8 +51,13 @@ public class PostVectorService {
     private static final String MODEL_KEY = "embeddingModel";
     // 판매 상태 - 재정렬 후보를 판매중 글로만 묶을 때 쓴다. 상태가 바뀌면 임베딩 없이 이 값만 고친다
     static final String STATUS_KEY = "status";
-    // 임베딩 모델은 메타데이터도 "키: 값"으로 본문에 붙여 임베딩하므로, 수시로 바뀌는 판매 상태는 빼야
-    // 같은 글이 상태에 따라 다른 벡터가 되지 않고 기존 벡터와도 같은 기준으로 비교된다 (넣었더니 eval 통과율 0.971 → 0.941)
+    // 임베딩 모델은 메타데이터도 "키: 값"으로 본문에 붙여 임베딩하므로, 수시로 바뀌는 값은 빼야
+    // 같은 글이 그 값에 따라 다른 벡터가 되지 않고 기존 벡터와도 같은 기준으로 비교된다
+    //  - 판매 상태: 넣었더니 eval 통과율 0.971 → 0.941
+    //  - 가격은 메타데이터에서 아예 뺐다: 읽는 곳이 없고, 가격만 바꾸면 재임베딩하지 않아(embeddingChanged) 예전 값이
+    //    남았다. 임베딩 텍스트에서도 빠져 eval R@10 0.925 → 0.933, MRR 0.933 → 0.950~0.967
+    //    (postId·모델명까지 빼면 R@10 0.917로 오히려 낮아 유지)
+    //  임베딩 텍스트 구성을 바꾸면 기존 벡터는 관리자 화면에서 재임베딩해야 새 기준으로 맞춰진다
     private static final DefaultContentFormatter CONTENT_FORMATTER = DefaultContentFormatter.builder()
             .withExcludedEmbedMetadataKeys(STATUS_KEY)
             .build();
@@ -452,7 +457,6 @@ public class PostVectorService {
                         "title", nullToEmpty(post.getTitle()),
                         "sport", post.getSport() != null ? post.getSport().name() : "",
                         "team", nullToEmpty(post.getTeam()),
-                        "price", post.getPrice(),
                         STATUS_KEY, post.getStatus() != null ? post.getStatus().name() : "",
                         MODEL_KEY, embeddingModel
                 )
