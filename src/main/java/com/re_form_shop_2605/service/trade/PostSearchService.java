@@ -106,8 +106,10 @@ public class PostSearchService {
                 .limit(safeSize)
                 .toList();
 
-        // 5) 상세 정보 조회
-        List<PostCardVO> posts = postMapper.findPostsByIds(pageIds, memberId, sport, condition, tradeType, minPrice, maxPrice, itemSize);
+        // 5) 상세 정보 조회 - 필터에 맞는 글이 없거나 마지막 페이지를 넘으면 조회하지 않는다
+        //    빈 목록을 넘기면 "post_id IN" 뒤가 비어 SQL 문법 오류(500)가 난다
+        List<PostCardVO> posts = pageIds.isEmpty() ? List.of()
+                : postMapper.findPostsByIds(pageIds, memberId, sport, condition, tradeType, minPrice, maxPrice, itemSize);
 
         // 6) DTO 변환
         List<PostCardDTO> content = posts.stream().map(post -> {

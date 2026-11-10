@@ -462,6 +462,24 @@ class PostVectorSearchTest {
     }
 
     @Test
+    void search_필터에_맞는_글이_없으면_상세_조회_없이_빈_페이지() {
+        // 빈 postId 목록으로 findPostsByIds를 부르면 "IN" 뒤가 비어 운영 MariaDB에서 SQL 문법 오류(500)가 났다
+        VectorStore vectorStore = mock(VectorStore.class);
+        when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(List.of(result(1L, 0.5)));
+        PostMapper postMapper = mock(PostMapper.class);
+        when(postMapper.findPostsByCondition(anyString(), any(), any(), any(), any(), any(), any(), any(), eq(0), eq(Integer.MAX_VALUE), any()))
+                .thenReturn(List.of());
+        when(postMapper.findVisiblePostIds(anyList(), any(), any(), any(), any(), any(), any())).thenReturn(List.of());
+        PostSearchService service = new PostSearchService(postMapper, null, provider(vectorStore), vectorService(vectorStore), MODEL, null);
+
+        PageResponse<PostCardDTO> page = service.search("T1", null, null, null, null, null, "M", null, 1, 10, null);
+
+        assertThat(page.content()).isEmpty();
+        assertThat(page.totalElements()).isZero();
+        verify(postMapper, never()).findPostsByIds(anyList(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
     void search_사이즈_필터를_모든_조회에_넘겨_총_건수와_페이지에_반영() {
         // 예전에는 화면이 받은 20건 안에서만 사이즈를 걸러 페이지마다 개수가 들쭉날쭉하고 총 건수가 필터를 무시했다
         VectorStore vectorStore = mock(VectorStore.class);
