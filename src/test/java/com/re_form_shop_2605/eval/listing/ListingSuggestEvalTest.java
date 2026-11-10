@@ -309,6 +309,8 @@ class ListingSuggestEvalTest {
             }
         }
 
-        return EvalReport.write("listing-suggest.md", md.toString());
+        // 실제 사진 셋 결과가 그림 셋 리포트를 덮어쓰지 않게 파일을 나눈다
+        String file = "real".equals(System.getProperty("eval.listing.dataset")) ? "listing-suggest-real.md" : "listing-suggest.md";
+        return EvalReport.write(file, md.toString());
     }
 }
