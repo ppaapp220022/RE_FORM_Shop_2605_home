@@ -1,6 +1,7 @@
 package com.re_form_shop_2605.eval.search;
 
 import com.re_form_shop_2605.entity.trade.Post;
+import com.re_form_shop_2605.eval.EvalReport;
 import com.re_form_shop_2605.service.trade.PostSearchReranker;
 import com.re_form_shop_2605.service.trade.PostSearchService;
 import com.re_form_shop_2605.service.trade.PostVectorService;
@@ -27,7 +28,6 @@ import java.io.InputStreamReader;
 import java.io.UncheckedIOException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -41,7 +41,6 @@ import java.util.Properties;
 import java.util.function.ToDoubleFunction;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * ─────────────────────────────────────────────────────
@@ -133,12 +132,8 @@ class SemanticSearchEvalTest {
         log.info("[Eval] {}", summary);
         log.info("[Eval] report={}", path);
 
-        String minRecall = System.getProperty("eval.search.minRecallAt10");
-        if (minRecall != null) {
-            double recall = mean(answerable(rows), r -> recallAt(r.hybrid(), r.evalCase().relevant(), 10));
-            assertTrue(recall >= Double.parseDouble(minRecall),
-                    "eval.search.minRecallAt10=" + minRecall + " 미달: " + summary);
-        }
+        EvalReport.assertAtLeast("eval.search.minRecallAt10",
+                mean(answerable(rows), r -> recallAt(r.hybrid(), r.evalCase().relevant(), 10)), summary);
     }
 
     /* 테스트 리소스의 application.properties가 main 것을 가리므로 클래스패스의 파일을 모두 확인한다 */
@@ -225,7 +220,7 @@ class SemanticSearchEvalTest {
     }
 
     private static double passRate(List<Row> rows) {
-        return rows.isEmpty() ? 0.0 : (double) rows.stream().filter(Row::passed).count() / rows.size();
+        return EvalReport.passRate(rows, Row::passed);
     }
 
     private static String summarize(List<Row> rows, String model, boolean rerank, double threshold) {
@@ -296,16 +291,9 @@ class SemanticSearchEvalTest {
         md.append("\n## 통과 검색어\n\n| id | 검색어 | 정답 | 첫 정답 순위 (hybrid / vector) | 정답 최고 유사도 | hybrid 상위 3개 (유사도) |\n|---|---|---|---|---|---|\n");
         rows.stream().filter(Row::passed).forEach(r -> md.append(detail(r, titles)));
 
-        try {
-            Path dir = Path.of(System.getProperty("eval.reportDir", "build/reports/eval"));
-            Files.createDirectories(dir);
-            String dataset = SearchEvalCase.dataset();
-            Path file = dir.resolve("default".equals(dataset) ? "semantic-search.md" : "semantic-search-" + dataset + ".md");
-            Files.writeString(file, md.toString(), StandardCharsets.UTF_8);
-            return file.toAbsolutePath();
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        }
+        String dataset = SearchEvalCase.dataset();
+        return EvalReport.write("default".equals(dataset) ? "semantic-search.md" : "semantic-search-" + dataset + ".md",
+                md.toString());
     }
 
     private static String detail(Row r, Map<Long, String> titles) {

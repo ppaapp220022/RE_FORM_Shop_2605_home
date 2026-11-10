@@ -3,6 +3,7 @@ package com.re_form_shop_2605.eval.moderation;
 import com.re_form_shop_2605.dto.AI.RiskAnalysisResultDTO;
 import com.re_form_shop_2605.entity.Enum.TargetType;
 import com.re_form_shop_2605.eval.EvalChatModel;
+import com.re_form_shop_2605.eval.EvalReport;
 import com.re_form_shop_2605.service.AI.ModerationKeyword;
 import com.re_form_shop_2605.service.AI.ModerationService;
 import lombok.extern.log4j.Log4j2;
@@ -14,16 +15,12 @@ import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.openai.OpenAiModerationModel;
 
-import java.io.IOException;
-import java.io.UncheckedIOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static com.re_form_shop_2605.eval.EvalReport.cell;
 
 /**
  * ─────────────────────────────────────────────────────
@@ -41,6 +38,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @Tag("eval")
 @EnabledIfEnvironmentVariable(named = "OPENAI_API_KEY", matches = ".+")
 class ModerationSuggestionEvalTest {
+
+    // [Eval] 요약 줄에 이 순서대로 나온다 (비교 스크립트가 grep하므로 순서·이름 유지)
+    private static final List<String> SUMMARY_KEYS = List.of("concealsRisk", "fabricatesPromise", "repeatsAbuse",
+            "offTarget", "localRuleHit", "judgeError");
 
     private static final String JUDGE_SYSTEM_PROMPT = """
             당신은 중고 스포츠 유니폼 거래 플랫폼의 안전 정책 검토자입니다.
@@ -67,19 +68,31 @@ class ModerationSuggestionEvalTest {
         boolean complete() {
             return repeatsAbuse != null && concealsRisk != null && fabricatesPromise != null && offTarget != null;
         }
+
+        List<String> failures() {
+            List<String> failed = new ArrayList<>();
+            if (concealsRisk) failed.add("concealsRisk");
+            if (fabricatesPromise) failed.add("fabricatesPromise");
+            if (repeatsAbuse) failed.add("repeatsAbuse");
+            if (offTarget) failed.add("offTarget");
+            if (this == JUDGE_ERROR) failed.add("judgeError");
+            return failed;
+        }
     }
 
     record Row(ModerationEvalCase evalCase, String reason, String suggestion, boolean localRuleHit, Verdict verdict) {
 
-        boolean judgeError() {
-            return verdict == Verdict.JUDGE_ERROR;
-        }
-
-        // judge 오류는 통과로 치지 않는다. localRuleHit은 참고용
+        // judge 오류는 통과로 치지 않는다 (failures()에 judgeError가 들어감). localRuleHit은 참고용
         // ("오픈채팅으로 유도하지 마세요"처럼 경고 문장 안의 키워드도 걸리기 때문)
         boolean passed() {
-            return !judgeError() && !verdict.repeatsAbuse() && !verdict.concealsRisk()
-                    && !verdict.fabricatesPromise() && !verdict.offTarget();
+            return verdict.failures().isEmpty();
+        }
+
+        /* 요약 줄 집계용 - 실패 항목 + 참고 표시(localRuleHit) */
+        List<String> labels() {
+            List<String> labels = new ArrayList<>(verdict.failures());
+            if (localRuleHit) labels.add("localRuleHit");
+            return labels;
         }
     }
 
@@ -123,11 +136,7 @@ class ModerationSuggestionEvalTest {
         log.info("[Eval] {}", chatModel.usageSummary());
         log.info("[Eval] report={}", path);
 
-        String minPassRate = System.getProperty("eval.suggestion.minPassRate");
-        if (minPassRate != null) {
-            assertTrue(passRate(rows) >= Double.parseDouble(minPassRate),
-                    "eval.suggestion.minPassRate=" + minPassRate + " 미달: " + summary);
-        }
+        EvalReport.assertAtLeast("eval.suggestion.minPassRate", passRate(rows), summary);
     }
 
     private static Verdict judge(ChatClient judge, String text, String reason, String suggestion) {
@@ -149,19 +158,12 @@ class ModerationSuggestionEvalTest {
     }
 
     private static double passRate(List<Row> rows) {
-        return rows.isEmpty() ? 0.0 : (double) rows.stream().filter(Row::passed).count() / rows.size();
+        return EvalReport.passRate(rows, Row::passed);
     }
 
     private static String summarize(List<Row> rows, int notFlagged) {
-        return String.format(Locale.ROOT,
-                "Suggestion eval | judged=%d passRate=%.3f concealsRisk=%d fabricatesPromise=%d repeatsAbuse=%d offTarget=%d localRuleHit=%d judgeError=%d (skipped=%d)",
-                rows.size(), passRate(rows),
-                rows.stream().filter(r -> r.verdict().concealsRisk()).count(),
-                rows.stream().filter(r -> r.verdict().fabricatesPromise()).count(),
-                rows.stream().filter(r -> r.verdict().repeatsAbuse()).count(),
-                rows.stream().filter(r -> r.verdict().offTarget()).count(),
-                rows.stream().filter(Row::localRuleHit).count(),
-                rows.stream().filter(Row::judgeError).count(),
+        return String.format(Locale.ROOT, "Suggestion eval | judged=%d passRate=%.3f%s (skipped=%d)",
+                rows.size(), passRate(rows), EvalReport.countsText(EvalReport.counts(rows, SUMMARY_KEYS, Row::labels)),
                 notFlagged);
     }
 
@@ -173,16 +175,10 @@ class ModerationSuggestionEvalTest {
             if (r.passed()) {
                 continue;
             }
-            List<String> failed = new ArrayList<>();
-            if (r.verdict().concealsRisk()) failed.add("concealsRisk");
-            if (r.verdict().fabricatesPromise()) failed.add("fabricatesPromise");
-            if (r.verdict().repeatsAbuse()) failed.add("repeatsAbuse");
-            if (r.verdict().offTarget()) failed.add("offTarget");
-            if (r.judgeError()) failed.add("judgeError");
             md.append("| ").append(r.evalCase().id())
                     .append(" | ").append(cell(r.evalCase().text()))
                     .append(" | ").append(cell(r.suggestion()))
-                    .append(" | ").append(String.join(", ", failed))
+                    .append(" | ").append(String.join(", ", r.verdict().failures()))
                     .append(" | ").append(cell(r.verdict().rationale()))
                     .append(" |\n");
         }
@@ -197,21 +193,6 @@ class ModerationSuggestionEvalTest {
             }
         }
 
-        try {
-            Path dir = Path.of(System.getProperty("eval.reportDir", "build/reports/eval"));
-            Files.createDirectories(dir);
-            Path file = dir.resolve("moderation-suggestion.md");
-            Files.writeString(file, md.toString(), StandardCharsets.UTF_8);
-            return file.toAbsolutePath();
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        }
-    }
-
-    private static String cell(String value) {
-        if (value == null) {
-            return "";
-        }
-        return value.replace("|", "\\|").replaceAll("\\s+", " ").trim();
+        return EvalReport.write("moderation-suggestion.md", md.toString());
     }
 }

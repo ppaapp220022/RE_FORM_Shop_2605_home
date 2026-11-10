@@ -2,6 +2,7 @@ package com.re_form_shop_2605.eval.moderation;
 
 import com.re_form_shop_2605.dto.AI.RiskAnalysisResultDTO;
 import com.re_form_shop_2605.entity.Enum.TargetType;
+import com.re_form_shop_2605.eval.EvalReport;
 import com.re_form_shop_2605.service.AI.ModerationKeyword;
 import com.re_form_shop_2605.service.AI.ModerationService;
 import lombok.extern.log4j.Log4j2;
@@ -19,7 +20,6 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * ─────────────────────────────────────────────────────
@@ -78,22 +78,8 @@ class ModerationLiveEvalTest {
         log.info("[Eval] report={}", path);
 
         assertEquals(0, apiFailures.get(), "Moderation API 호출 실패 케이스는 SAFE로 집계되어 지표가 왜곡됩니다. 다시 실행해주세요.");
-        assertAtLeast("eval.moderation.minPrecision", report.precision(), report);
-        assertAtLeast("eval.moderation.minRecall", report.recall(), report);
-        assertAtMost("eval.moderation.maxFalsePositiveRate", report.falsePositiveRate(), report);
-    }
-
-    private static void assertAtLeast(String property, double actual, ModerationEvalReport report) {
-        String threshold = System.getProperty(property);
-        if (threshold != null) {
-            assertTrue(actual >= Double.parseDouble(threshold), property + "=" + threshold + " 미달: " + report.summary());
-        }
-    }
-
-    private static void assertAtMost(String property, double actual, ModerationEvalReport report) {
-        String threshold = System.getProperty(property);
-        if (threshold != null) {
-            assertTrue(actual <= Double.parseDouble(threshold), property + "=" + threshold + " 초과: " + report.summary());
-        }
+        EvalReport.assertAtLeast("eval.moderation.minPrecision", report.precision(), report.summary());
+        EvalReport.assertAtLeast("eval.moderation.minRecall", report.recall(), report.summary());
+        EvalReport.assertAtMost("eval.moderation.maxFalsePositiveRate", report.falsePositiveRate(), report.summary());
     }
 }
