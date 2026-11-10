@@ -483,6 +483,27 @@ class PostServiceImplTest {
     }
 
     @Test
+    void searchPosts_XXL_필터는_더_큰_숫자_사이즈도_찾음() {
+        Member seller = createSeller("size_filter_xxl");
+        String title = "사이즈필터XXL " + System.nanoTime();
+        List<String> images = List.of("/uploads/post/temp/" + seller.getMemberId() + "/first.png");
+        Long xxl = postService.addPost(seller.getMemberId(), createPostRequestDTO(title, "110"), images);
+        Long bigger = postService.addPost(seller.getMemberId(), createPostRequestDTO(title, "115"), images);
+        Long biggest = postService.addPost(seller.getMemberId(), createPostRequestDTO(title, "120"), images);
+        Long xl = postService.addPost(seller.getMemberId(), createPostRequestDTO(title, "105"), images);
+
+        PageResponse<PostCardDTO> response = postService.searchPosts(
+                title, null, null, null, null, null, "XXL", "latest", 1, 20, null);
+        PageResponse<PostCardDTO> xlResponse = postService.searchPosts(
+                title, null, null, null, null, null, "XL", "latest", 1, 20, null);
+
+        org.assertj.core.api.Assertions.assertThat(response.content().stream().map(PostCardDTO::postId).toList())
+                .containsExactlyInAnyOrder(xxl, bigger, biggest);
+        org.assertj.core.api.Assertions.assertThat(xlResponse.content().stream().map(PostCardDTO::postId).toList())
+                .containsExactly(xl);
+    }
+
+    @Test
     void initPostVectors() {
         List<Post> posts = postRepository.findAllByStatusNotIn(List.of(PostStatus.DELETED, PostStatus.HIDDEN));
         log.info("전체 게시글 수: {}", posts.size());

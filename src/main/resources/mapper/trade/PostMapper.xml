@@ -3,14 +3,18 @@
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.re_form_shop_2605.mapper.trade.PostMapper">
     <!-- 사이즈 필터 (itemSize는 UniformSizes.normalize로 XS·S·M·L·XL·XXL 중 하나로 정리된 값)
-         예전 글은 숫자 사이즈로 저장돼 있어 국내 표기(85=XS, 90=S, 95=M, 100=L, 105=XL, 110=XXL)도 함께 찾는다 -->
+         예전 글은 숫자 사이즈로 저장돼 있어 국내 표기(85=XS, 90=S, 95=M, 100=L, 105=XL, 110=XXL)도 함께 찾는다
+         XXL보다 큰 115·120은 화면에 고를 사이즈가 없어 XXL에 넣는다 -->
     <sql id="itemSizeFilter">
         <if test="itemSize != null and itemSize != ''">
-            AND p.size IN (#{itemSize},
-                CASE #{itemSize}
-                    WHEN 'XS' THEN '85' WHEN 'S' THEN '90' WHEN 'M' THEN '95'
-                    WHEN 'L' THEN '100' WHEN 'XL' THEN '105' WHEN 'XXL' THEN '110'
-                END)
+            AND (p.size IN (#{itemSize},
+                    CASE #{itemSize}
+                        WHEN 'XS' THEN '85' WHEN 'S' THEN '90' WHEN 'M' THEN '95'
+                        WHEN 'L' THEN '100' WHEN 'XL' THEN '105' WHEN 'XXL' THEN '110'
+                    END)
+                <if test='itemSize == "XXL"'>
+                    OR p.size IN ('115', '120')
+                </if>)
         </if>
     </sql>
 
