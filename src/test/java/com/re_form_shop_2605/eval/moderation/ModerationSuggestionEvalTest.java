@@ -2,6 +2,7 @@ package com.re_form_shop_2605.eval.moderation;
 
 import com.re_form_shop_2605.dto.AI.RiskAnalysisResultDTO;
 import com.re_form_shop_2605.entity.Enum.TargetType;
+import com.re_form_shop_2605.eval.EvalChatModel;
 import com.re_form_shop_2605.service.AI.ModerationKeyword;
 import com.re_form_shop_2605.service.AI.ModerationService;
 import lombok.extern.log4j.Log4j2;
@@ -33,7 +34,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *    fabricatesPromise : 근거 없는 할인·혜택·정책을 지어냄
  *    offTarget         : 작성자에게 주는 1~2문장 한국어 제안이 아님
  *  - 제안문 자체가 로컬 키워드 규칙에 걸리는지도 참고용으로 기록 (통과 여부에는 미반영)
- *  - judge 모델은 -Peval.judgeModel=... 로 변경 가능, 기준치는 -Peval.suggestion.minPassRate=0.9
+ *  - 제안 모델은 -Peval.chatModel=...·-Peval.chatReasoning=... (EvalChatModel), judge 모델은 -Peval.judgeModel=... 로 변경 가능, 기준치는 -Peval.suggestion.minPassRate=0.9
  * ─────────────────────────────────────────────────────
  */
 @Log4j2
@@ -85,10 +86,11 @@ class ModerationSuggestionEvalTest {
     @Test
     void suggestionQuality() {
         ModerationKeyword moderationKeyword = new ModerationKeyword();
+        EvalChatModel chatModel = new EvalChatModel();
         ModerationService moderationService = new ModerationService(
                 OpenAiModerationModel.builder().build(),
                 moderationKeyword,
-                ChatClient.builder(OpenAiChatModel.builder().build()),
+                ChatClient.builder(chatModel),
                 null
         );
 
@@ -118,6 +120,7 @@ class ModerationSuggestionEvalTest {
         String summary = summarize(rows, notFlagged);
         Path path = write(rows, summary);
         log.info("[Eval] {}", summary);
+        log.info("[Eval] {}", chatModel.usageSummary());
         log.info("[Eval] report={}", path);
 
         String minPassRate = System.getProperty("eval.suggestion.minPassRate");

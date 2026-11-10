@@ -1,6 +1,7 @@
 package com.re_form_shop_2605.eval.listing;
 
 import com.re_form_shop_2605.dto.AI.AiListingSuggestResponseDTO;
+import com.re_form_shop_2605.eval.EvalChatModel;
 import com.re_form_shop_2605.service.trade.AiListingService;
 import lombok.extern.log4j.Log4j2;
 import org.junit.jupiter.api.Tag;
@@ -8,9 +9,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.prompt.ChatOptions;
-import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 
@@ -25,7 +24,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -50,6 +48,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *    concealsIssue          : 얼룩·찢어짐이나 레플리카/정품 아님 표시를 숨기거나 축소
  *    offTarget              : 이미지 속 상품과 맞지 않는 판매글 (유니폼이 아닌데 유니폼이라고 하는 등)
  *  - 기준치는 -Peval.listing.minPassRate=0.9 처럼 넘겼을 때만 검사, judge 모델은 -Peval.judgeModel=...
+ *  - 작성 모델은 -Peval.chatModel=...·-Peval.chatReasoning=... 로 바꿔 비용(토큰)과 품질을 비교 (EvalChatModel)
  * ─────────────────────────────────────────────────────
  */
 @Log4j2
@@ -130,28 +129,9 @@ class ListingSuggestEvalTest {
     @Test
     void listingSuggestionQuality() {
         // 운영과 같은 기본 채팅 모델 사용 (AiListingService는 ChatClient.Builder 기본 설정 그대로)
-        OpenAiChatModel chatModel = OpenAiChatModel.builder().build();
-
         // suggestFromImage는 API 장애도 빈 fallback으로 돌려주므로, 호출 실패를 세어 parseFailed와 구분한다
-        AtomicInteger apiFailures = new AtomicInteger();
-        ChatModel countingModel = new ChatModel() {
-            @Override
-            public ChatResponse call(Prompt prompt) {
-                try {
-                    return chatModel.call(prompt);
-                } catch (RuntimeException e) {
-                    apiFailures.incrementAndGet();
-                    log.error("[Eval] Chat API 호출 실패: {}", e.getMessage());
-                    throw e;
-                }
-            }
-
-            @Override
-            public ChatOptions getDefaultOptions() {
-                return chatModel.getDefaultOptions();
-            }
-        };
-        AiListingService service = new AiListingService(ChatClient.builder(countingModel));
+        EvalChatModel chatModel = new EvalChatModel();
+        AiListingService service = new AiListingService(ChatClient.builder(chatModel));
 
         OpenAiChatOptions judgeOptions = OpenAiChatOptions.builder()
                 .model(System.getProperty("eval.judgeModel", OpenAiChatOptions.DEFAULT_CHAT_MODEL))
@@ -175,9 +155,10 @@ class ListingSuggestEvalTest {
         String summary = summarize(rows);
         Path path = write(rows, summary);
         log.info("[Eval] {}", summary);
+        log.info("[Eval] {}", chatModel.usageSummary());
         log.info("[Eval] report={}", path);
 
-        assertEquals(0, apiFailures.get(), "Chat API 호출 실패 케이스는 parseFailed로 집계되어 지표가 왜곡됩니다. 다시 실행해주세요.");
+        assertEquals(0, chatModel.failures(), "Chat API 호출 실패 케이스는 parseFailed로 집계되어 지표가 왜곡됩니다. 다시 실행해주세요.");
         String minPassRate = System.getProperty("eval.listing.minPassRate");
         if (minPassRate != null) {
             assertTrue(passRate(rows) >= Double.parseDouble(minPassRate),
