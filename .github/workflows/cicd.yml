@@ -4,6 +4,12 @@ on:
   push:
     branches: [ main ]
 
+# 연달아 머지하면 배포가 동시에 돌아, 먼저 시작한 배포가 나중에 끝나면 운영이 예전 버전으로 덮인다.
+# 실행 중인 배포는 끝까지 두고(컨테이너 교체 중 중단 방지), 대기 중인 것은 가장 최신 것만 남긴다.
+concurrency:
+  group: deploy-home-server
+  cancel-in-progress: false
+
 env:
   IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/reform-shop-home
 
