@@ -1,5 +1,7 @@
 package com.re_form_shop_2605.service.trade;
 
+import com.re_form_shop_2605.config.PostSizeLabelMigration;
+import org.springframework.jdbc.core.JdbcTemplate;
 import com.re_form_shop_2605.domain.trade.PostCardVO;
 import com.re_form_shop_2605.dto.common.PageResponse;
 import com.re_form_shop_2605.dto.trade.PostCardDTO;
@@ -53,6 +55,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 //@Transactional
 class PostServiceImplTest {
 
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
     @Autowired
     private PostService postService;
     @Autowired
@@ -464,43 +468,42 @@ class PostServiceImplTest {
     }
 
     @Test
-    void searchPosts_사이즈_필터는_문자와_같은_숫자_사이즈를_함께_찾음() {
-        // 예전 글은 숫자(100)로, 새 글은 문자(L)로 저장돼 있다
+    void searchPosts_사이즈_필터는_같은_영문_사이즈만_찾음() {
         Member seller = createSeller("size_filter");
         String title = "사이즈필터 " + System.nanoTime();
         List<String> images = List.of("/uploads/post/temp/" + seller.getMemberId() + "/first.png");
-        Long numeric = postService.addPost(seller.getMemberId(), createPostRequestDTO(title, "100"), images);
-        Long letter = postService.addPost(seller.getMemberId(), createPostRequestDTO(title, "L"), images);
-        Long other = postService.addPost(seller.getMemberId(), createPostRequestDTO(title, "95"), images);
+        Long large = postService.addPost(seller.getMemberId(), createPostRequestDTO(title, "L"), images);
+        Long other = postService.addPost(seller.getMemberId(), createPostRequestDTO(title, "M"), images);
 
+        // 앞뒤 공백·소문자도 L로 정리된다
         PageResponse<PostCardDTO> response = postService.searchPosts(
                 title, null, null, null, null, null, " l ", "latest", 1, 20, null);
 
         org.assertj.core.api.Assertions.assertThat(response.content().stream().map(PostCardDTO::postId).toList())
-                .containsExactlyInAnyOrder(numeric, letter)
+                .containsExactly(large)
                 .doesNotContain(other);
-        assertThat(response.totalElements()).isEqualTo(2);
+        assertThat(response.totalElements()).isEqualTo(1);
     }
 
     @Test
-    void searchPosts_XXL_필터는_더_큰_숫자_사이즈도_찾음() {
-        Member seller = createSeller("size_filter_xxl");
-        String title = "사이즈필터XXL " + System.nanoTime();
+    void PostSizeLabelMigration_숫자_사이즈를_영문으로_바꿔_필터에_걸리게_함() {
+        // 예전 더미 글은 국내 숫자 표기로 저장돼 있었다
+        Member seller = createSeller("size_migration");
+        String title = "사이즈변환 " + System.nanoTime();
         List<String> images = List.of("/uploads/post/temp/" + seller.getMemberId() + "/first.png");
+        Long large = postService.addPost(seller.getMemberId(), createPostRequestDTO(title, "100"), images);
         Long xxl = postService.addPost(seller.getMemberId(), createPostRequestDTO(title, "110"), images);
         Long bigger = postService.addPost(seller.getMemberId(), createPostRequestDTO(title, "115"), images);
-        Long biggest = postService.addPost(seller.getMemberId(), createPostRequestDTO(title, "120"), images);
-        Long xl = postService.addPost(seller.getMemberId(), createPostRequestDTO(title, "105"), images);
 
-        PageResponse<PostCardDTO> response = postService.searchPosts(
+        PostSizeLabelMigration migration = new PostSizeLabelMigration(jdbcTemplate);
+        migration.run(null);
+        migration.run(null); // 두 번 돌려도 결과가 같다
+
+        org.assertj.core.api.Assertions.assertThat(postRepository.findById(large).orElseThrow().getSize()).isEqualTo("L");
+        PageResponse<PostCardDTO> xxlResponse = postService.searchPosts(
                 title, null, null, null, null, null, "XXL", "latest", 1, 20, null);
-        PageResponse<PostCardDTO> xlResponse = postService.searchPosts(
-                title, null, null, null, null, null, "XL", "latest", 1, 20, null);
-
-        org.assertj.core.api.Assertions.assertThat(response.content().stream().map(PostCardDTO::postId).toList())
-                .containsExactlyInAnyOrder(xxl, bigger, biggest);
-        org.assertj.core.api.Assertions.assertThat(xlResponse.content().stream().map(PostCardDTO::postId).toList())
-                .containsExactly(xl);
+        org.assertj.core.api.Assertions.assertThat(xxlResponse.content().stream().map(PostCardDTO::postId).toList())
+                .containsExactlyInAnyOrder(xxl, bigger);
     }
 
     @Test
