@@ -5,6 +5,7 @@ import com.re_form_shop_2605.entity.Enum.Grade;
 import com.re_form_shop_2605.entity.Enum.Sport;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
 import java.util.List;
@@ -32,6 +33,8 @@ public record ListingUpdateRequestDTO(
 
         Grade condition,
 
+        // 등록·수정·검색 필터 화면과 같은 영문 사이즈만 (UniformSizes.ALLOWED)
+        @Pattern(regexp = "XS|S|M|L|XL|XXL", message = "사이즈는 XS·S·M·L·XL·XXL 중 하나여야 합니다.")
         @Size(max = 10)
         String size,
 
