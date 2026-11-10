@@ -1,5 +1,6 @@
 package com.re_form_shop_2605.service.trade;
 
+import com.re_form_shop_2605.domain.trade.PostCardVO;
 import com.re_form_shop_2605.dto.common.PageResponse;
 import com.re_form_shop_2605.dto.trade.PostCardDTO;
 import com.re_form_shop_2605.entity.Enum.PostStatus;
@@ -24,6 +25,7 @@ import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -459,6 +461,32 @@ class PostVectorSearchTest {
         service.search("T1", null, null, null, null, null, null, "price_asc", 1, 10, null);
 
         verify(postMapper).findPostsByIds(eq(List.of(2L, 1L)), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void relevanceOrder_검색어가_들어간_글을_의미_검색_순서로_먼저_두고_의미_검색만_맞은_글은_뒤로() {
+        // 의미 검색 순서 5(다른 팀), 3, 9(다른 팀), 1 / 키워드(제목·본문에 검색어) 1, 3, 7
+        Set<Long> ordered = PostSearchService.relevanceOrder(List.of(5L, 3L, 9L, 1L), List.of(1L, 3L, 7L));
+
+        assertThat(ordered).containsExactly(3L, 1L, 7L, 5L, 9L);
+    }
+
+    @Test
+    void search_제목에_검색어가_있는_글이_비슷한_다른_팀_글보다_먼저() {
+        // 예전에는 의미 검색 결과(다른 팀 2)가 앞에 붙고 검색어가 그대로 든 글(1)이 뒤로 밀렸다
+        VectorStore vectorStore = mock(VectorStore.class);
+        when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(List.of(result(2L, 0.5), result(1L, 0.4)));
+        PostMapper postMapper = mock(PostMapper.class);
+        PostCardVO keywordHit = mock(PostCardVO.class);
+        when(keywordHit.getPostId()).thenReturn(1L);
+        when(postMapper.findPostsByCondition(anyString(), any(), any(), any(), any(), any(), any(), any(), eq(0), eq(Integer.MAX_VALUE), any()))
+                .thenReturn(List.of(keywordHit));
+        when(postMapper.findVisiblePostIds(anyList(), any(), any(), any(), any(), any(), any())).thenReturn(List.of(2L));
+        PostSearchService service = new PostSearchService(postMapper, null, provider(vectorStore), vectorService(vectorStore), MODEL, null);
+
+        service.search("친필 사인", null, null, null, null, null, null, null, 1, 10, null);
+
+        verify(postMapper).findPostsByIds(eq(List.of(1L, 2L)), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test

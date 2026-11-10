@@ -78,7 +78,8 @@
         <if test="keyword != null and keyword != ''">
             AND (p.title LIKE CONCAT('%', #{keyword}, '%')
             OR p.uniform_name LIKE CONCAT('%', #{keyword}, '%')
-            OR p.team LIKE CONCAT('%', #{keyword}, '%'))
+            OR p.team LIKE CONCAT('%', #{keyword}, '%')
+            OR p.content LIKE CONCAT('%', #{keyword}, '%'))
         </if>
         <if test="sport != null">
             AND p.sport = #{sport}
@@ -106,7 +107,8 @@
         <if test="keyword != null and keyword != ''">
             AND (p.title LIKE CONCAT('%', #{keyword}, '%')
             OR p.uniform_name LIKE CONCAT('%', #{keyword}, '%')
-            OR p.team LIKE CONCAT('%', #{keyword}, '%'))
+            OR p.team LIKE CONCAT('%', #{keyword}, '%')
+            OR p.content LIKE CONCAT('%', #{keyword}, '%'))
         </if>
         <if test="sport != null">
             AND p.sport = #{sport}
