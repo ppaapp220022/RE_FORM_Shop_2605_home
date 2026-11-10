@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * ─────────────────────────────────────────────────────
@@ -32,16 +33,16 @@ class ListingCheckTest {
 
     @Test
     void failedStatusIsParseFailedOnly() {
-        assertEquals(List.of("parseFailed"), ListingSuggestEvalTest.check(SEOUL, AiListingSuggestResponseDTO.fallback()));
+        assertEquals(List.of("parseFailed"), checkKnown(SEOUL, AiListingSuggestResponseDTO.fallback()));
     }
 
     @Test
     void productStatusMustMatchExpectation() {
-        assertEquals(List.of("productStatus"), ListingSuggestEvalTest.check(SEOUL, AiListingSuggestResponseDTO.noProduct()));
+        assertEquals(List.of("productStatus"), checkKnown(SEOUL, AiListingSuggestResponseDTO.noProduct()));
 
         ListingEvalCase empty = evalCase(MAPPER.createObjectNode(),
                 new ListingEvalCase.Expect(List.of(), null, null, List.of(), List.of(), true));
-        assertEquals(List.of(), ListingSuggestEvalTest.check(empty, AiListingSuggestResponseDTO.noProduct()));
+        assertEquals(List.of(), checkKnown(empty, AiListingSuggestResponseDTO.noProduct()));
         assertEquals(List.of("productStatus"), check(empty, "유니폼", "설명"));
     }
 
@@ -125,8 +126,23 @@ class ListingCheckTest {
                 check(SEOUL, "아주 긴 제목으로 쓴 유니폼 판매글입니다 정말로요", "정품 XL"));
     }
 
+    @Test
+    void judgeLabelsAreSummaryKeys() {
+        // judge 항목이 FAILURE_KEYS에 없으면 [Eval] 요약 줄 정해진 자리에 안 나온다
+        ListingSuggestEvalTest.Verdict all = new ListingSuggestEvalTest.Verdict(true, true, true, true, "");
+        assertTrue(ListingSuggestEvalTest.FAILURE_KEYS.containsAll(all.failures()), all.failures().toString());
+        assertTrue(ListingSuggestEvalTest.FAILURE_KEYS.containsAll(ListingSuggestEvalTest.Verdict.JUDGE_ERROR.failures()));
+    }
+
+    /* check()가 낸 라벨이 모두 FAILURE_KEYS에 있는지도 함께 확인한다 (이름이 어긋나면 요약 줄 자리에서 빠진다) */
+    private static List<String> checkKnown(ListingEvalCase evalCase, AiListingSuggestResponseDTO dto) {
+        List<String> failures = ListingSuggestEvalTest.check(evalCase, dto);
+        assertTrue(ListingSuggestEvalTest.FAILURE_KEYS.containsAll(failures), "FAILURE_KEYS에 없는 라벨: " + failures);
+        return failures;
+    }
+
     private static List<String> check(ListingEvalCase evalCase, String title, String description) {
-        return ListingSuggestEvalTest.check(evalCase,
+        return checkKnown(evalCase,
                 new AiListingSuggestResponseDTO(title, description, AiListingSuggestResponseDTO.OK));
     }
 

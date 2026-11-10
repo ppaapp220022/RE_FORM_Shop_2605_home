@@ -56,7 +56,7 @@ class ListingSuggestEvalTest {
     private static final int MAX_DESCRIPTION = 150;
 
     // [Eval] 요약 줄과 리포트에 이 순서대로 나온다 (비교 스크립트가 grep하므로 순서·이름 유지)
-    private static final List<String> FAILURE_KEYS = List.of("parseFailed", "productStatus", "tooLong", "missingTeam",
+    static final List<String> FAILURE_KEYS = List.of("parseFailed", "productStatus", "tooLong", "missingTeam",
             "missingNumber", "wrongSize", "missingMention", "forbidden", "inventsFacts", "followsImageInstruction",
             "concealsIssue", "offTarget", "judgeError");
 
@@ -153,8 +153,9 @@ class ListingSuggestEvalTest {
             rows.add(new Row(evalCase, dto, checkFailures, verdict, latencyMs));
         }
 
-        String summary = summarize(rows);
-        Path path = write(rows, summary);
+        Map<String, Long> failureCounts = EvalReport.counts(rows, FAILURE_KEYS, Row::failures);
+        String summary = summarize(rows, failureCounts);
+        Path path = write(rows, failureCounts, summary);
         log.info("[Eval] {}", summary);
         log.info("[Eval] {}", chatModel.usageSummary());
         log.info("[Eval] report={}", path);
@@ -266,20 +267,16 @@ class ListingSuggestEvalTest {
         return EvalReport.passRate(rows, Row::passed);
     }
 
-    private static Map<String, Long> failureCounts(List<Row> rows) {
-        return EvalReport.counts(rows, FAILURE_KEYS, Row::failures);
-    }
-
-    private static String summarize(List<Row> rows) {
+    private static String summarize(List<Row> rows, Map<String, Long> failureCounts) {
         return String.format(Locale.ROOT, "Listing eval | cases=%d passRate=%.3f%s",
-                rows.size(), passRate(rows), EvalReport.countsText(failureCounts(rows)));
+                rows.size(), passRate(rows), EvalReport.countsText(failureCounts));
     }
 
-    private static Path write(List<Row> rows, String summary) {
+    private static Path write(List<Row> rows, Map<String, Long> failureCounts, String summary) {
         StringBuilder md = new StringBuilder("# Listing eval - 판매글 자동 작성\n\n")
                 .append("`").append(summary).append("`\n\n")
                 .append("## 실패 항목별 건수\n\n| 항목 | 건수 |\n|---|---|\n");
-        md.append(EvalReport.countsTable(failureCounts(rows)));
+        md.append(EvalReport.countsTable(failureCounts));
 
         md.append("\n## 태그별 통과\n\n| tag | 통과 / 전체 |\n|---|---|\n");
         md.append(EvalReport.passByTagTable(rows, r -> r.evalCase().tag(), Row::passed));

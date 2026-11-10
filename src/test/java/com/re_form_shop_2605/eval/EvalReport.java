@@ -7,6 +7,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Collection;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -18,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * ─────────────────────────────────────────────────────
  * 설명: eval 리포트 공용 헬퍼 - 통과율, 실패 항목별 건수, 태그별 통과, 마크다운 저장
  *  - [Eval] 요약 줄의 "key=count" 부분은 countsText()로 만든다. 비교 스크립트가 이 형식(키 이름·순서)을 grep하므로
- *    키 순서는 호출하는 쪽이 넘긴 목록 순서를 그대로 따른다
+ *    키 순서는 호출하는 쪽이 넘긴 목록 순서를 그대로 따른다 (목록에 없는 라벨은 맨 뒤에 붙는다)
  * ─────────────────────────────────────────────────────
  */
 public final class EvalReport {
@@ -31,12 +32,18 @@ public final class EvalReport {
         return rows.isEmpty() ? 0.0 : (double) rows.stream().filter(passed).count() / rows.size();
     }
 
-    /** keys 순서대로, 각 키가 labels에 들어 있는 행 수 */
+    /**
+     * 라벨별로 그 라벨이 붙은 행 수. keys 순서대로 (0건도 포함) 나오고,
+     * keys에 없는 라벨은 조용히 빠지지 않도록 뒤에 나온 순서대로 붙인다
+     */
     public static <T> Map<String, Long> counts(List<T> rows, List<String> keys,
                                                Function<T, ? extends Collection<String>> labels) {
         Map<String, Long> counts = new LinkedHashMap<>();
-        for (String key : keys) {
-            counts.put(key, rows.stream().filter(r -> labels.apply(r).contains(key)).count());
+        keys.forEach(key -> counts.put(key, 0L));
+        for (T r : rows) {
+            for (String label : new LinkedHashSet<>(labels.apply(r))) {
+                counts.merge(label, 1L, Long::sum);
+            }
         }
         return counts;
     }

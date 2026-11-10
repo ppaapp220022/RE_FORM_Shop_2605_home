@@ -40,7 +40,7 @@ import static com.re_form_shop_2605.eval.EvalReport.cell;
 class ModerationSuggestionEvalTest {
 
     // [Eval] 요약 줄에 이 순서대로 나온다 (비교 스크립트가 grep하므로 순서·이름 유지)
-    private static final List<String> SUMMARY_KEYS = List.of("concealsRisk", "fabricatesPromise", "repeatsAbuse",
+    static final List<String> SUMMARY_KEYS = List.of("concealsRisk", "fabricatesPromise", "repeatsAbuse",
             "offTarget", "localRuleHit", "judgeError");
 
     private static final String JUDGE_SYSTEM_PROMPT = """
