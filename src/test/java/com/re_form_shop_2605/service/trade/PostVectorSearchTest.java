@@ -500,6 +500,29 @@ class PostVectorSearchTest {
     }
 
     @Test
+    void searchPosts_사이즈_필터의_공백과_대소문자를_정리하고_빈_값은_필터_없음() {
+        PostMapper postMapper = mock(PostMapper.class);
+        PostServiceImpl service = new PostServiceImpl(null, null, null, null, null, null, null, postMapper, null, null, null);
+
+        service.searchPosts(null, null, null, null, null, null, " xl ", null, 1, 20, null);
+        service.searchPosts(null, null, null, null, null, null, "  ", null, 1, 20, null);
+
+        verify(postMapper).countPostByCondition(isNull(), any(), any(), any(), any(), any(), eq("XL"));
+        verify(postMapper).countPostByCondition(isNull(), any(), any(), any(), any(), any(), isNull());
+    }
+
+    @Test
+    void search_허용하지_않는_사이즈는_조회_없이_400() {
+        PostMapper postMapper = mock(PostMapper.class);
+        PostSearchService service = new PostSearchService(postMapper, null, provider(null), null, MODEL, null);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> service.search("T1", null, null, null, null, null, "large", null, 1, 10, null))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(postMapper, never()).findPostsByCondition(any(), any(), any(), any(), any(), any(), any(), any(), any(Integer.class), any(Integer.class), any());
+    }
+
+    @Test
     void findSimilarPostIds_재정렬이_실패하면_같은_묶음이라도_기준값_미만_글은_뺌() {
         VectorStore vectorStore = mock(VectorStore.class);
         when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(List.of(

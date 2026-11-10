@@ -348,6 +348,7 @@ public class PostServiceImpl implements PostService {
     public PageResponse<PostCardDTO> searchPosts(String keyword, Sport sport, Grade condition, DeliveryType tradeType,
                                                   Integer minPrice, Integer maxPrice, String itemSize, String sort,
                                                   int page, int size, Long memberId) {
+        itemSize = UniformSizes.normalize(itemSize);
         int safePage = Math.max(page, 1);
         int safeSize = size <= 0 ? 10 : size;
 

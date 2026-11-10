@@ -62,6 +62,7 @@ public class PostSearchService {
     public PageResponse<PostCardDTO> search(String query, Sport sport, Grade condition,
                                     DeliveryType tradeType, Integer minPrice, Integer maxPrice, String itemSize,
                                     String sort, int page, int size, Long memberId) {
+        itemSize = UniformSizes.normalize(itemSize);
         int safePage = Math.max(page, 1);
         int safeSize = size <= 0 ? 10 : size;
         Set<Long> postIdSet = new LinkedHashSet<>();
