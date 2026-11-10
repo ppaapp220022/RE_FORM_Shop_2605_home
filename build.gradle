@@ -121,6 +121,20 @@ tasks.register('generateListingEvalImages', JavaExec) {
     systemProperty 'java.awt.headless', 'true'
 }
 
+// Dockerfile이 소스를 복사하기 전에 의존성만 먼저 받아 레이어로 캐시하도록 bootJar에 필요한 클래스패스를 미리 해석한다
+tasks.register('resolveDependencies') {
+    description = 'Downloads the dependencies bootJar needs, without compiling sources.'
+    group = 'build setup'
+    def classpaths = files(
+            configurations.compileClasspath,
+            configurations.annotationProcessor,
+            configurations.runtimeClasspath)
+    inputs.files(classpaths)
+    doLast {
+        logger.lifecycle("Resolved ${classpaths.files.size()} dependency files")
+    }
+}
+
 jar {
     enabled = false
 }
