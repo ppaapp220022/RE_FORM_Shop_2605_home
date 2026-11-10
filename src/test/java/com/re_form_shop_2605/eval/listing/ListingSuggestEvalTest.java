@@ -2,32 +2,28 @@ package com.re_form_shop_2605.eval.listing;
 
 import com.re_form_shop_2605.dto.AI.AiListingSuggestResponseDTO;
 import com.re_form_shop_2605.eval.EvalChatModel;
+import com.re_form_shop_2605.eval.EvalReport;
 import com.re_form_shop_2605.service.trade.AiListingService;
 import lombok.extern.log4j.Log4j2;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Pattern;
 
+import static com.re_form_shop_2605.eval.EvalReport.cell;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * ─────────────────────────────────────────────────────
@@ -58,6 +54,11 @@ class ListingSuggestEvalTest {
 
     private static final int MAX_TITLE = 20;
     private static final int MAX_DESCRIPTION = 150;
+
+    // [Eval] 요약 줄과 리포트에 이 순서대로 나온다 (비교 스크립트가 grep하므로 순서·이름 유지)
+    static final List<String> FAILURE_KEYS = List.of("parseFailed", "productStatus", "tooLong", "missingTeam",
+            "missingNumber", "wrongSize", "missingMention", "forbidden", "inventsFacts", "followsImageInstruction",
+            "concealsIssue", "offTarget", "judgeError");
 
     // 라벨이 없는데 이런 사이즈 표기가 나오면 지어낸 것으로 본다 ("100%" 같은 퍼센트는 제외)
     private static final Pattern CONCRETE_SIZE = Pattern.compile(
@@ -152,18 +153,15 @@ class ListingSuggestEvalTest {
             rows.add(new Row(evalCase, dto, checkFailures, verdict, latencyMs));
         }
 
-        String summary = summarize(rows);
-        Path path = write(rows, summary);
+        Map<String, Long> failureCounts = EvalReport.counts(rows, FAILURE_KEYS, Row::failures);
+        String summary = summarize(rows, failureCounts);
+        Path path = write(rows, failureCounts, summary);
         log.info("[Eval] {}", summary);
         log.info("[Eval] {}", chatModel.usageSummary());
         log.info("[Eval] report={}", path);
 
         assertEquals(0, chatModel.failures(), "Chat API 호출 실패 케이스는 parseFailed로 집계되어 지표가 왜곡됩니다. 다시 실행해주세요.");
-        String minPassRate = System.getProperty("eval.listing.minPassRate");
-        if (minPassRate != null) {
-            assertTrue(passRate(rows) >= Double.parseDouble(minPassRate),
-                    "eval.listing.minPassRate=" + minPassRate + " 미달: " + summary);
-        }
+        EvalReport.assertAtLeast("eval.listing.minPassRate", passRate(rows), summary);
     }
 
     static List<String> check(ListingEvalCase evalCase, AiListingSuggestResponseDTO dto) {
@@ -266,41 +264,22 @@ class ListingSuggestEvalTest {
     }
 
     private static double passRate(List<Row> rows) {
-        return rows.isEmpty() ? 0.0 : (double) rows.stream().filter(Row::passed).count() / rows.size();
+        return EvalReport.passRate(rows, Row::passed);
     }
 
-    private static Map<String, Long> failureCounts(List<Row> rows) {
-        Map<String, Long> counts = new LinkedHashMap<>();
-        for (String key : List.of("parseFailed", "productStatus", "tooLong", "missingTeam", "missingNumber", "wrongSize",
-                "missingMention", "forbidden", "inventsFacts", "followsImageInstruction", "concealsIssue",
-                "offTarget", "judgeError")) {
-            counts.put(key, rows.stream().filter(r -> r.failures().contains(key)).count());
-        }
-        return counts;
-    }
-
-    private static String summarize(List<Row> rows) {
-        StringBuilder failures = new StringBuilder();
-        failureCounts(rows).forEach((key, count) -> failures.append(' ').append(key).append('=').append(count));
+    private static String summarize(List<Row> rows, Map<String, Long> failureCounts) {
         return String.format(Locale.ROOT, "Listing eval | cases=%d passRate=%.3f%s",
-                rows.size(), passRate(rows), failures);
+                rows.size(), passRate(rows), EvalReport.countsText(failureCounts));
     }
 
-    private static Path write(List<Row> rows, String summary) {
+    private static Path write(List<Row> rows, Map<String, Long> failureCounts, String summary) {
         StringBuilder md = new StringBuilder("# Listing eval - 판매글 자동 작성\n\n")
                 .append("`").append(summary).append("`\n\n")
                 .append("## 실패 항목별 건수\n\n| 항목 | 건수 |\n|---|---|\n");
-        failureCounts(rows).forEach((key, count) -> md.append("| ").append(key).append(" | ").append(count).append(" |\n"));
+        md.append(EvalReport.countsTable(failureCounts));
 
         md.append("\n## 태그별 통과\n\n| tag | 통과 / 전체 |\n|---|---|\n");
-        Map<String, int[]> byTag = new LinkedHashMap<>();
-        for (Row r : rows) {
-            int[] count = byTag.computeIfAbsent(r.evalCase().tag(), k -> new int[2]);
-            if (r.passed()) count[0]++;
-            count[1]++;
-        }
-        byTag.forEach((tag, count) -> md.append("| ").append(tag).append(" | ")
-                .append(count[0]).append(" / ").append(count[1]).append(" |\n"));
+        md.append(EvalReport.passByTagTable(rows, r -> r.evalCase().tag(), Row::passed));
 
         md.append("\n## 실패 케이스\n\n| id | 제목 | 설명 | 실패 항목 | judge 근거 |\n|---|---|---|---|---|\n");
         for (Row r : rows) {
@@ -324,21 +303,6 @@ class ListingSuggestEvalTest {
             }
         }
 
-        try {
-            Path dir = Path.of(System.getProperty("eval.reportDir", "build/reports/eval"));
-            Files.createDirectories(dir);
-            Path file = dir.resolve("listing-suggest.md");
-            Files.writeString(file, md.toString(), StandardCharsets.UTF_8);
-            return file.toAbsolutePath();
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        }
-    }
-
-    private static String cell(String value) {
-        if (value == null) {
-            return "";
-        }
-        return value.replace("|", "\\|").replaceAll("\\s+", " ").trim();
+        return EvalReport.write("listing-suggest.md", md.toString());
     }
 }

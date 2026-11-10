@@ -1,14 +1,13 @@
 package com.re_form_shop_2605.eval.moderation;
 
-import java.io.IOException;
-import java.io.UncheckedIOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
+import com.re_form_shop_2605.eval.EvalReport;
+
 import java.nio.file.Path;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
+
+import static com.re_form_shop_2605.eval.EvalReport.cell;
+import static com.re_form_shop_2605.eval.EvalReport.row;
 
 /**
  * ─────────────────────────────────────────────────────
@@ -97,13 +96,7 @@ public class ModerationEvalReport {
         md.append(row("TP / FP / FN / TN", tp + " / " + fp + " / " + fn + " / " + tn));
 
         md.append("\n## 태그별 이진 정확도\n\n| tag | 정답 / 전체 |\n|---|---|\n");
-        Map<String, int[]> byTag = new LinkedHashMap<>();
-        for (Result r : results) {
-            int[] count = byTag.computeIfAbsent(r.evalCase().tag(), k -> new int[2]);
-            if (r.binaryCorrect()) count[0]++;
-            count[1]++;
-        }
-        byTag.forEach((tag, count) -> md.append(row(tag, count[0] + " / " + count[1])));
+        md.append(EvalReport.passByTagTable(results, r -> r.evalCase().tag(), Result::binaryCorrect));
 
         md.append("\n## 오판정 케이스\n\n| id | 기대 | 실제 | 텍스트 | 사유 | 메모 |\n|---|---|---|---|---|---|\n");
         for (Result r : results) {
@@ -133,33 +126,14 @@ public class ModerationEvalReport {
             }
         }
 
-        try {
-            Path dir = Path.of(System.getProperty("eval.reportDir", "build/reports/eval"));
-            Files.createDirectories(dir);
-            Path file = dir.resolve(fileName);
-            Files.writeString(file, md.toString(), StandardCharsets.UTF_8);
-            return file.toAbsolutePath();
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        }
+        return EvalReport.write(fileName, md.toString());
     }
 
     private static double ratio(int numerator, int denominator) {
         return denominator == 0 ? 0.0 : (double) numerator / denominator;
     }
 
-    private static String row(String key, String value) {
-        return "| " + key + " | " + value + " |\n";
-    }
-
     private static String pct(double value) {
         return String.format(Locale.ROOT, "%.1f%%", value * 100);
-    }
-
-    private static String cell(String value) {
-        if (value == null) {
-            return "";
-        }
-        return value.replace("|", "\\|").replaceAll("\\s+", " ").trim();
     }
 }
