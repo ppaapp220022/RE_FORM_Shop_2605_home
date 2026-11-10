@@ -62,7 +62,7 @@ public class Post extends BaseEntity {
     private Grade grade; // 유니폼 상태 등급
 
     @Column(name = "size",length = 10)
-    private String size; // 유니폼 사이즈 (85 ~120)
+    private String size; // 유니폼 사이즈 (XS·S·M·L·XL·XXL, UniformSizes.ALLOWED)
 
     @Column(name = "marking",columnDefinition = "BOOLEAN DEFAULT FALSE")
     private Boolean marking; // 마킹 여부
