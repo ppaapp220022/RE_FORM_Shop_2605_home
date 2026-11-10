@@ -346,19 +346,20 @@ public class PostServiceImpl implements PostService {
     /* 필터, 정렬 기준에 따른 검색 결과 조회 */
     @Override
     public PageResponse<PostCardDTO> searchPosts(String keyword, Sport sport, Grade condition, DeliveryType tradeType,
-                                                  Integer minPrice, Integer maxPrice, String sort,
+                                                  Integer minPrice, Integer maxPrice, String itemSize, String sort,
                                                   int page, int size, Long memberId) {
+        itemSize = UniformSizes.normalize(itemSize);
         int safePage = Math.max(page, 1);
         int safeSize = size <= 0 ? 10 : size;
 
         // 1) 게시글 목록 조회
         int offset = (safePage - 1) * safeSize;
         List<PostCardVO> posts = postMapper.findPostsByCondition(
-                keyword, sport, condition, tradeType, minPrice, maxPrice, sort, offset, safeSize, memberId);
+                keyword, sport, condition, tradeType, minPrice, maxPrice, itemSize, sort, offset, safeSize, memberId);
 
         // 2) 전체 건수 조회
         int totalElements = postMapper.countPostByCondition(
-                keyword, sport, condition, tradeType, minPrice, maxPrice);
+                keyword, sport, condition, tradeType, minPrice, maxPrice, itemSize);
 
         // 3) DTO 변환
         List<PostCardDTO> content = new ArrayList<>();

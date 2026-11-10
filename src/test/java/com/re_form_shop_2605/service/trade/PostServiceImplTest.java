@@ -422,6 +422,10 @@ class PostServiceImplTest {
     }
 
     private PostRequestDTO createPostRequestDTO(String title) {
+        return createPostRequestDTO(title, "100");
+    }
+
+    private PostRequestDTO createPostRequestDTO(String title, String size) {
         return new PostRequestDTO(
                 title,
                 "테스트 본문",
@@ -429,7 +433,7 @@ class PostServiceImplTest {
                 "LG",
                 "유니폼",
                 Grade.A,
-                "100",
+                size,
                 false,
                 10000,
                 DeliveryType.DIRECT
@@ -444,7 +448,7 @@ class PostServiceImplTest {
         int size = 10;
 
         PageResponse<PostCardDTO> response = postService.searchPosts(
-                keyword, sport, null, null, null, null,
+                keyword, sport, null, null, null, null, null,
                 "latest", page, size, null
         );
 
@@ -457,6 +461,46 @@ class PostServiceImplTest {
             assertThat(response.content().get(0).sport()).isEqualTo(Sport.BASEBALL);
             assertThat(response.content().get(0).seller()).isNotNull();
         }
+    }
+
+    @Test
+    void searchPosts_사이즈_필터는_문자와_같은_숫자_사이즈를_함께_찾음() {
+        // 예전 글은 숫자(100)로, 새 글은 문자(L)로 저장돼 있다
+        Member seller = createSeller("size_filter");
+        String title = "사이즈필터 " + System.nanoTime();
+        List<String> images = List.of("/uploads/post/temp/" + seller.getMemberId() + "/first.png");
+        Long numeric = postService.addPost(seller.getMemberId(), createPostRequestDTO(title, "100"), images);
+        Long letter = postService.addPost(seller.getMemberId(), createPostRequestDTO(title, "L"), images);
+        Long other = postService.addPost(seller.getMemberId(), createPostRequestDTO(title, "95"), images);
+
+        PageResponse<PostCardDTO> response = postService.searchPosts(
+                title, null, null, null, null, null, " l ", "latest", 1, 20, null);
+
+        org.assertj.core.api.Assertions.assertThat(response.content().stream().map(PostCardDTO::postId).toList())
+                .containsExactlyInAnyOrder(numeric, letter)
+                .doesNotContain(other);
+        assertThat(response.totalElements()).isEqualTo(2);
+    }
+
+    @Test
+    void searchPosts_XXL_필터는_더_큰_숫자_사이즈도_찾음() {
+        Member seller = createSeller("size_filter_xxl");
+        String title = "사이즈필터XXL " + System.nanoTime();
+        List<String> images = List.of("/uploads/post/temp/" + seller.getMemberId() + "/first.png");
+        Long xxl = postService.addPost(seller.getMemberId(), createPostRequestDTO(title, "110"), images);
+        Long bigger = postService.addPost(seller.getMemberId(), createPostRequestDTO(title, "115"), images);
+        Long biggest = postService.addPost(seller.getMemberId(), createPostRequestDTO(title, "120"), images);
+        Long xl = postService.addPost(seller.getMemberId(), createPostRequestDTO(title, "105"), images);
+
+        PageResponse<PostCardDTO> response = postService.searchPosts(
+                title, null, null, null, null, null, "XXL", "latest", 1, 20, null);
+        PageResponse<PostCardDTO> xlResponse = postService.searchPosts(
+                title, null, null, null, null, null, "XL", "latest", 1, 20, null);
+
+        org.assertj.core.api.Assertions.assertThat(response.content().stream().map(PostCardDTO::postId).toList())
+                .containsExactlyInAnyOrder(xxl, bigger, biggest);
+        org.assertj.core.api.Assertions.assertThat(xlResponse.content().stream().map(PostCardDTO::postId).toList())
+                .containsExactly(xl);
     }
 
     @Test

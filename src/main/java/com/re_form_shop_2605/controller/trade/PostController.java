@@ -13,6 +13,7 @@ import com.re_form_shop_2605.service.trade.PostSearchService;
 import com.re_form_shop_2605.service.trade.PostImageService;
 import com.re_form_shop_2605.service.trade.PostService;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -52,7 +53,8 @@ public class PostController {
      */
     @Operation(
             summary = "판매글 검색 및 목록 조회",
-            description = "키워드 제외 searchPosts, 키워드 포함 search 사용해 유사 의미 검색 결과 반환 구현"
+            description = "키워드 제외 searchPosts, 키워드 포함 search 사용해 유사 의미 검색 결과 반환 구현. "
+                    + "사이즈 필터는 itemSize(XS·S·M·L·XL·XXL), size는 페이지 크기"
     )
     @GetMapping
     public ResponseEntity<ApiResponse<PageResponse<PostCardDTO>>> readListings(
@@ -63,9 +65,13 @@ public class PostController {
             @RequestParam(required = false) Grade condition,    // 추가 (확인 후 주석 삭제)
             @RequestParam(required = false) Integer minPrice,   // 추가 (확인 후 주석 삭제)
             @RequestParam(required = false) Integer maxPrice,   // 추가 (확인 후 주석 삭제)
+            // 유니폼 사이즈 필터 (XS·S·M·L·XL·XXL) - size는 페이지 크기라 이름을 따로 둔다
+            @Parameter(description = "유니폼 사이즈 필터 (XS·S·M·L·XL·XXL, 대소문자 무관). 다른 값은 400")
+            @RequestParam(required = false) String itemSize,
             // 없으면 검색어 검색은 관련도순, 목록은 최신순 (latest·price_asc·price_desc·popular)
             @RequestParam(required = false) String sort,
             @RequestParam(defaultValue = "0") int page,
+            @Parameter(description = "페이지 크기 (사이즈 필터는 itemSize)")
             @RequestParam(defaultValue = "10") int size
     ) {
         Long memberId = principal != null ? principal.getMemberId() : null;
@@ -74,11 +80,11 @@ public class PostController {
         if (keyword != null && !keyword.isBlank()) {
             // 1) 키워드가 있을 경우, AI 통한 유사 의미 검색 + 일반 검색
             response = postSearchService.search(
-                    keyword, sport, condition, tradeType, minPrice, maxPrice, sort, page, size, memberId);
+                    keyword, sport, condition, tradeType, minPrice, maxPrice, itemSize, sort, page, size, memberId);
         } else {
             // 2) 키워드가 없을 경우, 필터/정렬 적용한 일반 검색
             response = postService.searchPosts(
-                    null, sport, condition, tradeType, minPrice, maxPrice, sort, page, size, memberId);
+                    null, sport, condition, tradeType, minPrice, maxPrice, itemSize, sort, page, size, memberId);
         }
         return ResponseEntity.ok(ApiResponse.ok(response,
                 "판매글 목록 조회 완료"));
@@ -99,6 +105,7 @@ public class PostController {
 
         int safeSize = Math.max(1, Math.min(size, 50));
         PageResponse<PostCardDTO> response = postService.searchPosts(
+                null,
                 null,
                 null,
                 null,

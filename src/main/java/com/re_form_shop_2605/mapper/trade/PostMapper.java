@@ -48,6 +48,7 @@ public interface PostMapper {
                                           @Param("tradeType") DeliveryType tradeType,
                                           @Param("minPrice") Integer minPrice,
                                           @Param("maxPrice") Integer maxPrice,
+                                          @Param("itemSize") String itemSize,
                                           @Param("sort") String sort,
                                           @Param("offset") int offset,
                                           @Param("size") int size,
@@ -59,7 +60,8 @@ public interface PostMapper {
                              @Param("condition") Grade condition,
                              @Param("tradeType") DeliveryType tradeType,
                              @Param("minPrice") Integer minPrice,
-                             @Param("maxPrice") Integer maxPrice);
+                             @Param("maxPrice") Integer maxPrice,
+                             @Param("itemSize") String itemSize);
 
     // 3. postId 통해 게시글 상세 정보 목록 가져오기 (프론트에 보여줄 PostCardDTO 생성용)
     List<PostCardVO> findPostsByIds(@Param("postIds") List<Long> postIds,
@@ -68,7 +70,8 @@ public interface PostMapper {
                                     @Param("condition") Grade condition,
                                     @Param("tradeType") DeliveryType tradeType,
                                     @Param("minPrice") Integer minPrice,
-                                    @Param("maxPrice") Integer maxPrice); // 찜 여부 확인용
+                                    @Param("maxPrice") Integer maxPrice,
+                                    @Param("itemSize") String itemSize); // 찜 여부 확인용
 
     // 4. postId 목록 중 화면에 나오는 글(판매중·필터 조건)의 postId 반환 (순서 없음, 페이지네이션용)
     List<Long> findVisiblePostIds(@Param("postIds") List<Long> postIds,
@@ -76,7 +79,8 @@ public interface PostMapper {
                         @Param("condition") Grade condition,
                         @Param("tradeType") DeliveryType tradeType,
                         @Param("minPrice") Integer minPrice,
-                        @Param("maxPrice") Integer maxPrice);
+                        @Param("maxPrice") Integer maxPrice,
+                        @Param("itemSize") String itemSize);
 
     // 5. postId 목록을 목록 화면과 같은 정렬 기준(latest·price_asc·price_desc·popular)으로 다시 세운다
     List<Long> sortPostIds(@Param("postIds") List<Long> postIds, @Param("sort") String sort);
