@@ -8,6 +8,7 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.content.Media;
 import org.springframework.stereotype.Service;
 import org.springframework.util.MimeType;
@@ -22,6 +23,10 @@ import org.springframework.util.MimeType;
 @Service
 @Log4j2
 public class AiListingService {
+    // 2026-11-10 eval(판매글 25건): 추론 기본 0.92·low 0.96·minimal 0.76, low는 기본보다 호출당 비용 약 절반
+    static final String MODEL = "gpt-5-mini";
+    static final String REASONING_EFFORT = "low";
+
     private final ChatClient chatClient;
     private final ObjectMapper objectMapper;
 
@@ -86,7 +91,9 @@ public class AiListingService {
             Prompt prompt = Prompt.builder().messages(systemMessage, userMessage).build();
 
             // 5. LLM 호출
+            // Prompt에 넣은 옵션은 ChatClient가 버리므로(eval에서 추론 강도 null 확인) 요청 옵션으로 넣는다
             String rawJson = chatClient.prompt(prompt)
+                    .options(OpenAiChatOptions.builder().model(MODEL).reasoningEffort(REASONING_EFFORT))
                     .call()
                     .content();
             log.info("[AiListingService] AI 원본 응답: {}", rawJson);
