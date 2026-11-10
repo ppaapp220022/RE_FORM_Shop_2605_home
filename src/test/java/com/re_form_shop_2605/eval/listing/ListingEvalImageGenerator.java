@@ -38,7 +38,8 @@ public class ListingEvalImageGenerator {
     public static void main(String[] args) throws IOException {
         Path dir = Path.of(args.length > 0 ? args[0] : "src/test/resources/eval/listing/images");
         Files.createDirectories(dir);
-        for (ListingEvalCase c : ListingEvalCase.load()) {
+        // 실제 사진 셋은 그릴 것이 없으므로 항상 그림 셋만
+        for (ListingEvalCase c : ListingEvalCase.load(ListingEvalCase.DATASET, ListingEvalCase.IMAGE_DIR)) {
             BufferedImage image = draw(c.render());
             Path file = dir.resolve(c.id() + ".png");
             ImageIO.write(image, "png", file.toFile());

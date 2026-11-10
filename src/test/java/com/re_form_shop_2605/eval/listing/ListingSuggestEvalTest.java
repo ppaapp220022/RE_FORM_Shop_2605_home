@@ -142,7 +142,7 @@ class ListingSuggestEvalTest {
         List<Row> rows = new ArrayList<>();
         for (ListingEvalCase evalCase : ListingEvalCase.load()) {
             long start = System.currentTimeMillis();
-            AiListingSuggestResponseDTO dto = service.suggestFromImage("image/png", image(evalCase));
+            AiListingSuggestResponseDTO dto = service.suggestFromImage(evalCase.mimeType(), image(evalCase));
             long latencyMs = System.currentTimeMillis() - start;
 
             List<String> checkFailures = check(evalCase, dto);
@@ -221,12 +221,18 @@ class ListingSuggestEvalTest {
     /* 팀명·등번호 등 이미지에 실제로 있는 글자(예: "SK", "T1")가 사이즈로 오인되지 않도록 지운다.
        부분 문자열로 지우면 번호 9가 "95"의 9까지 지우므로, 앞뒤가 영문·숫자가 아닌 토큰 단위로만 지운다 */
     private static String withoutVisibleText(String upper, ListingEvalCase evalCase) {
-        String result = upper;
-        for (String field : List.of("chest", "sub", "name", "number")) {
-            if (evalCase.render().hasNonNull(field)) {
-                String token = Pattern.quote(evalCase.render().get(field).asText().toUpperCase(Locale.ROOT));
-                result = result.replaceAll("(?<![A-Z0-9])" + token + "(?![A-Z0-9])", " ");
+        List<String> tokens = new ArrayList<>(evalCase.visibleText());
+        if (evalCase.render() != null) {
+            for (String field : List.of("chest", "sub", "name", "number")) {
+                if (evalCase.render().hasNonNull(field)) {
+                    tokens.add(evalCase.render().get(field).asText());
+                }
             }
+        }
+        String result = upper;
+        for (String text : tokens) {
+            String token = Pattern.quote(text.toUpperCase(Locale.ROOT));
+            result = result.replaceAll("(?<![A-Z0-9])" + token + "(?![A-Z0-9])", " ");
         }
         return result;
     }

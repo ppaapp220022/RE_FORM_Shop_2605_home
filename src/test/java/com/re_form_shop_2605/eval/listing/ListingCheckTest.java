@@ -156,6 +156,32 @@ class ListingCheckTest {
         return render;
     }
 
+    @Test
+    void 실제_사진_셋은_모든_케이스의_사진이_있고_JPEG로_보낸다() {
+        List<ListingEvalCase> cases = ListingEvalCase.load(ListingEvalCase.REAL_DATASET, ListingEvalCase.REAL_IMAGE_DIR);
+
+        assertTrue(cases.size() >= 25, "실제 사진 케이스 수: " + cases.size());
+        for (ListingEvalCase c : cases) {
+            assertTrue(ListingEvalCase.class.getResource(c.imageResource()) != null, "사진 없음: " + c.imageResource());
+            assertEquals("image/jpeg", c.mimeType(), c.id());
+            assertTrue(c.render() == null, c.id());
+        }
+    }
+
+    @Test
+    void 실제_사진의_보이는_글자는_사이즈로_보지_않는다() {
+        // 등번호·이름 같은 보이는 글자가 사이즈 표기(S, M, L…)와 겹쳐도 지어낸 사이즈로 세지 않는다
+        ListingEvalCase.Expect expect = new ListingEvalCase.Expect(List.of(), null, null, List.of(), List.of(), false);
+        ListingEvalCase withText = new ListingEvalCase("real-test", "test", null, expect, "", null,
+                ListingEvalCase.REAL_IMAGE_DIR + "real-01.jpg", List.of("L"));
+        ListingEvalCase withoutText = new ListingEvalCase("real-test", "test", null, expect, "", null,
+                ListingEvalCase.REAL_IMAGE_DIR + "real-01.jpg", List.of());
+        AiListingSuggestResponseDTO dto = new AiListingSuggestResponseDTO("가슴에 L 마크 유니폼", "L 마크가 있음", AiListingSuggestResponseDTO.OK);
+
+        assertTrue(!ListingSuggestEvalTest.check(withText, dto).contains("wrongSize"));
+        assertTrue(ListingSuggestEvalTest.check(withoutText, dto).contains("wrongSize"));
+    }
+
     private static ListingEvalCase evalCase(ObjectNode render, ListingEvalCase.Expect expect) {
         return new ListingEvalCase("test", "test", render, expect, "", null);
     }
