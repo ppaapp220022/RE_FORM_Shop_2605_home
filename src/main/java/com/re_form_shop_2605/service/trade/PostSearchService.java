@@ -60,7 +60,7 @@ public class PostSearchService {
 
     /* 검색어 적용 결과 목록 반환 */
     public PageResponse<PostCardDTO> search(String query, Sport sport, Grade condition,
-                                    DeliveryType tradeType, Integer minPrice, Integer maxPrice,
+                                    DeliveryType tradeType, Integer minPrice, Integer maxPrice, String itemSize,
                                     String sort, int page, int size, Long memberId) {
         int safePage = Math.max(page, 1);
         int safeSize = size <= 0 ? 10 : size;
@@ -72,7 +72,7 @@ public class PostSearchService {
 
         // 2) 키워드 검색
         List<PostCardVO> keywordResults = postMapper.findPostsByCondition(
-                query, sport, condition, tradeType, minPrice, maxPrice, sort, 0, Integer.MAX_VALUE, memberId
+                query, sport, condition, tradeType, minPrice, maxPrice, itemSize, sort, 0, Integer.MAX_VALUE, memberId
         );
         keywordResults.forEach(post -> { postIdSet.add(post.getPostId()); });
 
@@ -90,7 +90,7 @@ public class PostSearchService {
         keywordResults.forEach(post -> visible.add(post.getPostId()));
         List<Long> unchecked = similarIds.stream().filter(id -> !visible.contains(id)).toList();
         if (!unchecked.isEmpty()) {
-            visible.addAll(postMapper.findVisiblePostIds(unchecked, sport, condition, tradeType, minPrice, maxPrice));
+            visible.addAll(postMapper.findVisiblePostIds(unchecked, sport, condition, tradeType, minPrice, maxPrice, itemSize));
         }
         List<Long> postIds = postIdSet.stream().filter(visible::contains).toList();
         // 정렬을 고르지 않으면 관련도순(의미 검색 결과 → 키워드 결과) 그대로, 고르면 걸러진 글 전체를 그 기준으로 다시 세운다
@@ -106,7 +106,7 @@ public class PostSearchService {
                 .toList();
 
         // 5) 상세 정보 조회
-        List<PostCardVO> posts = postMapper.findPostsByIds(pageIds, memberId, sport, condition, tradeType, minPrice, maxPrice);
+        List<PostCardVO> posts = postMapper.findPostsByIds(pageIds, memberId, sport, condition, tradeType, minPrice, maxPrice, itemSize);
 
         // 6) DTO 변환
         List<PostCardDTO> content = posts.stream().map(post -> {

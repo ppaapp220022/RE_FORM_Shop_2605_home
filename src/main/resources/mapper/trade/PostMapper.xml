@@ -87,6 +87,9 @@
         <if test="maxPrice != null">
             AND p.price &lt;= #{maxPrice}
         </if>
+        <if test="itemSize != null and itemSize != ''">
+            AND p.size = #{itemSize}
+        </if>
         <include refid="listSortOrderBy"/>
         LIMIT #{size} OFFSET #{offset}
     </select>
@@ -113,6 +116,9 @@
         </if>
         <if test="maxPrice != null">
             AND p.price &lt;= #{maxPrice}
+        </if>
+        <if test="itemSize != null and itemSize != ''">
+            AND p.size = #{itemSize}
         </if>
     </select>
 
@@ -148,6 +154,9 @@
                 <if test="maxPrice != null">
                     AND p.price &lt;= #{maxPrice}
                 </if>
+                <if test="itemSize != null and itemSize != ''">
+                    AND p.size = #{itemSize}
+                </if>
         ORDER BY FIELD(p.post_id,
         <foreach collection="postIds" item="id" separator=",">
             #{id}
@@ -175,6 +184,9 @@
         </if>
         <if test="maxPrice != null">
             AND p.price &lt;= #{maxPrice}
+        </if>
+        <if test="itemSize != null and itemSize != ''">
+            AND p.size = #{itemSize}
         </if>
     </select>
 

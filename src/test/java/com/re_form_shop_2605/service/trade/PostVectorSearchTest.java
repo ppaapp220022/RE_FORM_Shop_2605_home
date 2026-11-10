@@ -432,15 +432,15 @@ class PostVectorSearchTest {
                 .mapToObj(id -> result(id, 0.5)).toList();
         when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(results);
         PostMapper postMapper = mock(PostMapper.class);
-        when(postMapper.findPostsByCondition(anyString(), any(), any(), any(), any(), any(), any(), eq(0), eq(Integer.MAX_VALUE), any()))
+        when(postMapper.findPostsByCondition(anyString(), any(), any(), any(), any(), any(), any(), any(), eq(0), eq(Integer.MAX_VALUE), any()))
                 .thenReturn(List.of());
-        when(postMapper.findVisiblePostIds(anyList(), any(), any(), any(), any(), any())).thenReturn(List.of(12L, 11L));
+        when(postMapper.findVisiblePostIds(anyList(), any(), any(), any(), any(), any(), any())).thenReturn(List.of(12L, 11L));
         PostSearchService service = new PostSearchService(postMapper, null, provider(vectorStore), vectorService(vectorStore), MODEL, null);
 
-        PageResponse<PostCardDTO> page = service.search("T1", null, null, null, null, null, null, 1, 10, null);
+        PageResponse<PostCardDTO> page = service.search("T1", null, null, null, null, null, null, null, 1, 10, null);
 
         assertThat(page.totalElements()).isEqualTo(2);
-        verify(postMapper).findPostsByIds(eq(List.of(11L, 12L)), any(), any(), any(), any(), any(), any());
+        verify(postMapper).findPostsByIds(eq(List.of(11L, 12L)), any(), any(), any(), any(), any(), any(), any());
         verify(postMapper, never()).sortPostIds(anyList(), any());
     }
 
@@ -450,15 +450,53 @@ class PostVectorSearchTest {
         VectorStore vectorStore = mock(VectorStore.class);
         when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(List.of(result(1L, 0.5), result(2L, 0.4)));
         PostMapper postMapper = mock(PostMapper.class);
-        when(postMapper.findPostsByCondition(anyString(), any(), any(), any(), any(), any(), any(), eq(0), eq(Integer.MAX_VALUE), any()))
+        when(postMapper.findPostsByCondition(anyString(), any(), any(), any(), any(), any(), any(), any(), eq(0), eq(Integer.MAX_VALUE), any()))
                 .thenReturn(List.of());
-        when(postMapper.findVisiblePostIds(anyList(), any(), any(), any(), any(), any())).thenReturn(List.of(1L, 2L));
+        when(postMapper.findVisiblePostIds(anyList(), any(), any(), any(), any(), any(), any())).thenReturn(List.of(1L, 2L));
         when(postMapper.sortPostIds(List.of(1L, 2L), "price_asc")).thenReturn(List.of(2L, 1L));
         PostSearchService service = new PostSearchService(postMapper, null, provider(vectorStore), vectorService(vectorStore), MODEL, null);
 
-        service.search("T1", null, null, null, null, null, "price_asc", 1, 10, null);
+        service.search("T1", null, null, null, null, null, null, "price_asc", 1, 10, null);
 
-        verify(postMapper).findPostsByIds(eq(List.of(2L, 1L)), any(), any(), any(), any(), any(), any());
+        verify(postMapper).findPostsByIds(eq(List.of(2L, 1L)), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void search_사이즈_필터를_모든_조회에_넘겨_총_건수와_페이지에_반영() {
+        // 예전에는 화면이 받은 20건 안에서만 사이즈를 걸러 페이지마다 개수가 들쭉날쭉하고 총 건수가 필터를 무시했다
+        VectorStore vectorStore = mock(VectorStore.class);
+        List<Document> results = java.util.stream.LongStream.rangeClosed(1, 12)
+                .mapToObj(id -> result(id, 0.5)).toList();
+        when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(results);
+        PostMapper postMapper = mock(PostMapper.class);
+        when(postMapper.findPostsByCondition(anyString(), any(), any(), any(), any(), any(), eq("L"), any(), eq(0), eq(Integer.MAX_VALUE), any()))
+                .thenReturn(List.of());
+        when(postMapper.findVisiblePostIds(anyList(), any(), any(), any(), any(), any(), eq("L"))).thenReturn(List.of(3L, 5L, 7L));
+        PostSearchService service = new PostSearchService(postMapper, null, provider(vectorStore), vectorService(vectorStore), MODEL, null);
+
+        PageResponse<PostCardDTO> page = service.search("T1", null, null, null, null, null, "L", null, 2, 2, null);
+
+        assertThat(page.totalElements()).isEqualTo(3);
+        assertThat(page.totalPages()).isEqualTo(2);
+        verify(postMapper).findPostsByCondition(eq("T1"), any(), any(), any(), any(), any(), eq("L"), any(), eq(0), eq(Integer.MAX_VALUE), any());
+        verify(postMapper).findVisiblePostIds(anyList(), any(), any(), any(), any(), any(), eq("L"));
+        verify(postMapper).findPostsByIds(eq(List.of(7L)), any(), any(), any(), any(), any(), any(), eq("L"));
+    }
+
+    @Test
+    void searchPosts_사이즈_필터를_목록과_총_건수_조회에_모두_넘김() {
+        PostMapper postMapper = mock(PostMapper.class);
+        when(postMapper.findPostsByCondition(any(), any(), any(), any(), any(), any(), any(), any(), any(Integer.class), any(Integer.class), any()))
+                .thenReturn(List.of());
+        when(postMapper.countPostByCondition(any(), any(), any(), any(), any(), any(), eq("M"))).thenReturn(25);
+        PostServiceImpl service = new PostServiceImpl(null, null, null, null, null, null, null, postMapper, null, null, null);
+
+        PageResponse<PostCardDTO> page = service.searchPosts(null, null, null, null, null, null, "M", "latest", 2, 20, null);
+
+        assertThat(page.totalElements()).isEqualTo(25);
+        assertThat(page.totalPages()).isEqualTo(2);
+        verify(postMapper).findPostsByCondition(isNull(), any(), any(), any(), any(), any(), eq("M"), eq("latest"), eq(20), eq(20), any());
+        verify(postMapper).countPostByCondition(isNull(), any(), any(), any(), any(), any(), eq("M"));
     }
 
     @Test

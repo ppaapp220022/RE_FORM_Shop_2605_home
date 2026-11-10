@@ -63,6 +63,8 @@ public class PostController {
             @RequestParam(required = false) Grade condition,    // 추가 (확인 후 주석 삭제)
             @RequestParam(required = false) Integer minPrice,   // 추가 (확인 후 주석 삭제)
             @RequestParam(required = false) Integer maxPrice,   // 추가 (확인 후 주석 삭제)
+            // 유니폼 사이즈 필터 (XS·S·M·L·XL·XXL) - size는 페이지 크기라 이름을 따로 둔다
+            @RequestParam(required = false) String itemSize,
             // 없으면 검색어 검색은 관련도순, 목록은 최신순 (latest·price_asc·price_desc·popular)
             @RequestParam(required = false) String sort,
             @RequestParam(defaultValue = "0") int page,
@@ -74,11 +76,11 @@ public class PostController {
         if (keyword != null && !keyword.isBlank()) {
             // 1) 키워드가 있을 경우, AI 통한 유사 의미 검색 + 일반 검색
             response = postSearchService.search(
-                    keyword, sport, condition, tradeType, minPrice, maxPrice, sort, page, size, memberId);
+                    keyword, sport, condition, tradeType, minPrice, maxPrice, itemSize, sort, page, size, memberId);
         } else {
             // 2) 키워드가 없을 경우, 필터/정렬 적용한 일반 검색
             response = postService.searchPosts(
-                    null, sport, condition, tradeType, minPrice, maxPrice, sort, page, size, memberId);
+                    null, sport, condition, tradeType, minPrice, maxPrice, itemSize, sort, page, size, memberId);
         }
         return ResponseEntity.ok(ApiResponse.ok(response,
                 "판매글 목록 조회 완료"));
@@ -99,6 +101,7 @@ public class PostController {
 
         int safeSize = Math.max(1, Math.min(size, 50));
         PageResponse<PostCardDTO> response = postService.searchPosts(
+                null,
                 null,
                 null,
                 null,

@@ -444,7 +444,7 @@ class PostServiceImplTest {
         int size = 10;
 
         PageResponse<PostCardDTO> response = postService.searchPosts(
-                keyword, sport, null, null, null, null,
+                keyword, sport, null, null, null, null, null,
                 "latest", page, size, null
         );
 

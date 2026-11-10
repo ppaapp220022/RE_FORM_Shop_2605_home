@@ -47,7 +47,7 @@ public interface PostService {
     // 게시글 검색 조회
     PageResponse<PostCardDTO> searchPosts(String keyword, Sport sport,
                                           Grade condition, DeliveryType tradeType,
-                                          Integer minPrice, Integer maxPrice,
+                                          Integer minPrice, Integer maxPrice, String itemSize,
                                           String sort, int page, int size,
                                           Long memberId);
 
