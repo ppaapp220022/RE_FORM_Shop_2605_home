@@ -65,19 +65,14 @@ public class PostSearchService {
         itemSize = UniformSizes.normalize(itemSize);
         int safePage = Math.max(page, 1);
         int safeSize = size <= 0 ? 10 : size;
-        Set<Long> postIdSet = new LinkedHashSet<>();
-
         // 1) AI 통한 유사 의미 결과 검색
         List<Long> similarIds = findSimilarPostIds(query);
-        postIdSet.addAll(similarIds);
 
-        // 2) 키워드 검색
+        // 2) 키워드 검색 (제목·유니폼명·팀·본문)
         List<PostCardVO> keywordResults = postMapper.findPostsByCondition(
                 query, sport, condition, tradeType, minPrice, maxPrice, itemSize, sort, 0, Integer.MAX_VALUE, memberId
         );
-        keywordResults.forEach(post -> { postIdSet.add(post.getPostId()); });
-
-
+        Set<Long> postIdSet = relevanceOrder(similarIds, keywordResults.stream().map(PostCardVO::getPostId).toList());
 
         // 3) postIds가 비어있을 경우, 빈 결과 반환
         if (postIdSet.isEmpty()) {
@@ -132,6 +127,17 @@ public class PostSearchService {
         boolean last = totalPages == 0 || safePage >= totalPages;
 
         return new PageResponse<>(content, totalElements, totalPages, safeSize, safePage, first, last);
+    }
+
+    /* 관련도순 - 검색어가 그대로 들어간 글을 먼저(그 안에서는 의미 검색 순서), 그다음 의미 검색으로만 찾은 글 */
+    //  예전에는 의미 검색 결과를 앞에 두고 키워드 결과를 뒤에 붙여, 제목에 검색어가 그대로 있는 글이 비슷한 다른 팀 글보다 뒤로 밀렸다
+    static Set<Long> relevanceOrder(List<Long> similarIds, List<Long> keywordIds) {
+        Set<Long> keywordSet = new HashSet<>(keywordIds);
+        Set<Long> ordered = new LinkedHashSet<>();
+        similarIds.stream().filter(keywordSet::contains).forEach(ordered::add);
+        ordered.addAll(keywordIds);
+        ordered.addAll(similarIds);
+        return ordered;
     }
 
     /* 벡터 유사도 검색 - 관련도 높은 순 postId 목록 (검색 eval에서도 사용) */
