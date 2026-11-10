@@ -55,6 +55,8 @@ public class PostSearchService {
     public static final int RERANK_CANDIDATES = 20;
     static final Duration RERANK_CACHE_TTL = Duration.ofMinutes(10);
     static final int RERANK_CACHE_SIZE = 500;
+    // 목록 화면의 정렬 기준 - 검색어 검색에서 이 중 하나를 고르면 관련도순 대신 이 기준으로 보여준다
+    static final Set<String> LIST_SORTS = Set.of("latest", "price_asc", "price_desc", "popular");
 
     /* 검색어 적용 결과 목록 반환 */
     public PageResponse<PostCardDTO> search(String query, Sport sport, Grade condition,
@@ -91,6 +93,10 @@ public class PostSearchService {
             visible.addAll(postMapper.findVisiblePostIds(unchecked, sport, condition, tradeType, minPrice, maxPrice));
         }
         List<Long> postIds = postIdSet.stream().filter(visible::contains).toList();
+        // 정렬을 고르지 않으면 관련도순(의미 검색 결과 → 키워드 결과) 그대로, 고르면 걸러진 글 전체를 그 기준으로 다시 세운다
+        if (sort != null && LIST_SORTS.contains(sort) && !postIds.isEmpty()) {
+            postIds = postMapper.sortPostIds(postIds, sort);
+        }
         int totalElements = postIds.size();
         int totalPages = totalElements == 0 ? 0 : (int) Math.ceil((double) totalElements / safeSize);
         int offset = (safePage - 1) * safeSize;
