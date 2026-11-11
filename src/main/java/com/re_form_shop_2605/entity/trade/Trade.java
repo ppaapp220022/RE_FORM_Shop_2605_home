@@ -14,7 +14,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 @Getter
-@ToString
+@ToString(exclude = {"post", "buyer", "seller", "chatRooms"}) // 연관 엔티티는 빼서 순환 참조·지연 로딩 예외를 막는다
 @Builder
 @AllArgsConstructor
 @NoArgsConstructor
@@ -111,6 +111,7 @@ public class Trade extends BaseEntity {
 
     // 연결 채팅방 목록
     @OneToMany(mappedBy = "trade")
+    @Builder.Default
     private List<ChatRoom> chatRooms = new ArrayList<>();
 
 //    @OneToOne(mappedBy = "trade", fetch = FetchType.LAZY)

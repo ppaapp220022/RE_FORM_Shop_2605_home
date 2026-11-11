@@ -14,7 +14,7 @@ import java.util.List;
 
 @Entity
 @Getter
-@ToString
+@ToString(exclude = {"sellerId", "images", "wishes", "chatRooms", "trade"}) // 연관 엔티티는 빼서 순환 참조·지연 로딩 예외를 막는다
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
@@ -79,9 +79,11 @@ public class Post extends BaseEntity {
     private PostStatus status;
 
     @Column(name = "view_count", nullable = false)
+    @Builder.Default
     private Integer viewCount = 0;
 
     @Column(name = "wish_count", nullable = false)
+    @Builder.Default
     private Integer wishCount = 0;
 
     @Enumerated(EnumType.STRING)
@@ -93,12 +95,15 @@ public class Post extends BaseEntity {
     private LocalDateTime updatedAt;
 
     @OneToMany(mappedBy = "post", fetch = FetchType.LAZY)
+    @Builder.Default
     private List<PostImage> images = new ArrayList<>();
 
     @OneToMany(mappedBy = "post", fetch = FetchType.LAZY)
+    @Builder.Default
     private List<Wish> wishes = new ArrayList<>();
 
     @OneToMany(mappedBy = "post")
+    @Builder.Default
     private List<ChatRoom> chatRooms = new ArrayList<>();
 
     @OneToOne(mappedBy = "post", fetch = FetchType.LAZY)

@@ -137,6 +137,7 @@ public class PostController {
             @AuthenticationPrincipal MemberSecurityDTO principal
     ) {
         Long viewerId = principal != null ? principal.getMemberId() : null;
+        postService.increaseViewCount(postId, viewerId);
         return ResponseEntity.ok(ApiResponse.ok(postService.readPost(postId, viewerId), "판매글 상세 조회 완료"));
     }
 

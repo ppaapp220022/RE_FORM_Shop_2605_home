@@ -410,6 +410,52 @@ class PostServiceImplTest {
         assertEquals(2, notificationRepository.findAllByMember_MemberIdOrderByNotiIdDesc(watcher.getMemberId()).size());
     }
 
+    @Test
+    void 상세_조회마다_조회수가_오르고_판매자_본인_조회는_세지_않는다() {
+        Member seller = createSeller("view_count");
+        Member viewer = createSeller("view_count_viewer");
+        Long postId = postService.addPost(seller.getMemberId(), createPostRequestDTO("view title"), List.of());
+
+        postService.increaseViewCount(postId, viewer.getMemberId());
+        postService.increaseViewCount(postId, null);
+        postService.increaseViewCount(postId, seller.getMemberId());
+
+        assertEquals(2, postService.readPost(postId, null).viewCount());
+    }
+
+    @Test
+    void 다른_판매글의_이미지나_외부_URL은_붙일_수_없다() {
+        Member seller = createSeller("foreign_image");
+        Long postId = postService.addPost(seller.getMemberId(), createPostRequestDTO("foreign image title"), List.of());
+        PostUpdateRequestDTO update = new PostUpdateRequestDTO("new title", null, null, null, null, null, null, null, 1000, null);
+
+        for (String url : List.of(
+                "/uploads/post/" + (postId + 1) + "/other.png",
+                "https://evil.example.com/a.png",
+                "/uploads/post/" + postId + "/../" + (postId + 1) + "/other.png",
+                "/uploads/post/temp/" + (seller.getMemberId() + 1) + "/someone-else.png"
+        )) {
+            assertThrows(IllegalArgumentException.class,
+                    () -> postService.modifyPost(postId, seller.getMemberId(), update, List.of(url)),
+                    url);
+        }
+    }
+
+    @Test
+    void 자기_판매글_이미지와_시드_이미지는_그대로_쓸_수_있다() {
+        Member seller = createSeller("own_image");
+        Long postId = postService.addPost(seller.getMemberId(), createPostRequestDTO("own image title"), List.of());
+        PostUpdateRequestDTO update = new PostUpdateRequestDTO("new title", null, null, null, null, null, null, null, 1000, null);
+
+        postService.modifyPost(postId, seller.getMemberId(), update,
+                List.of("/uploads/post/" + postId + "/mine.png", "/uploads/post/seed/lg-twins.svg"));
+
+        assertEquals(
+                List.of("/uploads/post/" + postId + "/mine.png", "/uploads/post/seed/lg-twins.svg"),
+                postService.readPost(postId, null).imageUrls()
+        );
+    }
+
     private Member createSeller(String prefix) {
         long seed = System.nanoTime();
         Member seller = Member.builder()

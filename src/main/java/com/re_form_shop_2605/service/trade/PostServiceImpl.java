@@ -32,6 +32,7 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.Objects;
 
 /**
@@ -107,6 +108,13 @@ public class PostServiceImpl implements PostService {
         postVectorService.savePostVectorAfterCommit(savedPost); // 벡터 저장 (유사 의미 검색용, 커밋 뒤)
 
         return savedPost.getPostId();
+    }
+
+    @Override
+    // 상세 조회 1회마다 조회수를 올린다. 판매자 본인의 조회는 세지 않는다.
+    public void increaseViewCount(Long postId, Long viewerId) {
+        // 비로그인 조회는 viewerId가 없으므로, 어떤 회원 id와도 겹치지 않는 값으로 비교한다.
+        postRepository.increaseViewCount(postId, viewerId != null ? viewerId : -1L);
     }
 
     @Override
@@ -311,13 +319,19 @@ public class PostServiceImpl implements PostService {
 
     private void applyPostModeration(Post post) {
         String contentCheck = buildModerationContent(post.getTitle(), post.getContent());
-        RiskAnalysisResultDTO moderation = moderationService.checkAndSave(
+        Optional<RiskAnalysisResultDTO> moderation = moderationService.tryCheckAndSave(
                 contentCheck,
                 TargetType.POST,
                 post.getPostId()
         );
-        post.updateRiskLevel(moderation.riskLevel());
-        log.info("[Post Moderation] postId={}, riskLevel={}", post.getPostId(), moderation.riskLevel());
+        if (moderation.isEmpty()) {
+            // API 장애로 검사하지 못했으면 기존 위험도를 그대로 둔다. (null로 덮으면 이전 HIGH 판정이 사라진다)
+            // 새 글이면 riskLevel이 null로 남아 위험 탐지 배치가 다시 검사한다.
+            log.warn("[Post Moderation] postId={} 검사 실패 - 기존 riskLevel={} 유지", post.getPostId(), post.getRiskLevel());
+            return;
+        }
+        post.updateRiskLevel(moderation.get().riskLevel());
+        log.info("[Post Moderation] postId={}, riskLevel={}", post.getPostId(), moderation.get().riskLevel());
     }
 
     private String buildModerationContent(String title, String content) {

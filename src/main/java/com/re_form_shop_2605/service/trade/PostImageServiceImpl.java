@@ -42,6 +42,7 @@ public class PostImageServiceImpl implements PostImageService {
     private static final int MAX_THUMBNAIL_HEIGHT = 480;
     private static final String TEMP_URL_SEGMENT = "/uploads/post/temp/";
     private static final String FINAL_URL_PREFIX = "/uploads/post/";
+    private static final String SEED_URL_PREFIX = "/uploads/post/seed/"; // dummy.sql 시드 판매글 이미지
     private static final String THUMBNAIL_PREFIX = "thumb_";
     private final Path uploadRootPath;
 
@@ -151,6 +152,21 @@ public class PostImageServiceImpl implements PostImageService {
         }
     }
 
+    private boolean isOwnedFinalUrl(String imageUrl, String finalUrlPrefix) {
+        if (imageUrl.contains("..") || imageUrl.contains("\\")) {
+            return false;
+        }
+        String fileName;
+        if (imageUrl.startsWith(finalUrlPrefix)) {
+            fileName = imageUrl.substring(finalUrlPrefix.length());
+        } else if (imageUrl.startsWith(SEED_URL_PREFIX)) {
+            fileName = imageUrl.substring(SEED_URL_PREFIX.length());
+        } else {
+            return false;
+        }
+        return !fileName.isEmpty() && !fileName.contains("/");
+    }
+
     private String finalizeSingleImageUrl(Long postId, Long memberId, String imageUrl, Path finalDirectory, String finalUrlPrefix) throws IOException {
         if (!StringUtils.hasText(imageUrl)) {
             return imageUrl;
@@ -158,7 +174,12 @@ public class PostImageServiceImpl implements PostImageService {
 
         String tempPrefix = TEMP_URL_SEGMENT + memberId + "/";
         if (!imageUrl.startsWith(tempPrefix)) {
-            return imageUrl;
+            // 이미 승격된 이미지는 이 판매글 폴더나 시드 이미지만 허용한다.
+            // 다른 판매글의 이미지나 외부 URL을 붙이지 못하게 막는다.
+            if (isOwnedFinalUrl(imageUrl, finalUrlPrefix)) {
+                return imageUrl;
+            }
+            throw new IllegalArgumentException("사용할 수 없는 이미지 주소입니다.");
         }
 
         String fileName = imageUrl.substring(tempPrefix.length());
