@@ -76,7 +76,8 @@ auth:sessions:{memberId}
 - `POST /api/auth/register`
 - `GET /api/auth/check-nickname`
 - `POST /api/auth/token/refresh`
-- `POST /api/auth/password/reset`
+- `POST /api/auth/password/reset/code` (가입 이메일로 6자리 인증코드 발송)
+- `POST /api/auth/password/reset` (이메일 + 인증코드 + 새 비밀번호)
 - `GET /api/auth/oauth/kakao`
 - `GET /api/auth/oauth/google`
 

@@ -43,6 +43,9 @@ public class RestAuthenticationEntryPoint implements AuthenticationEntryPoint {
         } else if ("AUTH_ERROR".equals(exception)) {
             response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
             response.getWriter().write("{\"success\":false,\"message\":\"인증 오류가 발생했습니다.\",\"code\":\"40103\"}");
+        } else if ("ACCOUNT_RESTRICTED".equals(exception)) {
+            response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+            response.getWriter().write("{\"success\":false,\"message\":\"이용이 제한된 계정입니다.\",\"code\":\"40301\"}");
         } else {
             // 토큰 자체가 없는 등의 일반적인 금지 요청
             response.setStatus(HttpServletResponse.SC_FORBIDDEN);

@@ -10,5 +10,7 @@ public interface MailService {
 
     void sendLoginCodeEmail(String email, String code);
 
+    void sendPasswordResetCodeEmail(String email, String code);
+
     void sendTradeNotificationEmail(Member member, TradeNotificationTemplateDTO template);
 }

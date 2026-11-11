@@ -1,6 +1,7 @@
 package com.re_form_shop_2605.security.JWT;
 
 import com.re_form_shop_2605.dto.login.MemberSecurityDTO;
+import com.re_form_shop_2605.entity.Enum.MemberStatus;
 import com.re_form_shop_2605.entity.member.Member;
 import com.re_form_shop_2605.repository.member.MemberRepository;
 import lombok.extern.log4j.Log4j2;
@@ -48,6 +49,8 @@ public class CustomUserDetailsService implements UserDetailsService {
                 member.getProfileImageUrl(),
                 false,
                 "local",
+                member.getStatus() != MemberStatus.WITHDRAWN,
+                member.getStatus() != MemberStatus.SUSPENDED,
                 List.of(new SimpleGrantedAuthority("ROLE_" + member.getRole().name()))
         );
     }

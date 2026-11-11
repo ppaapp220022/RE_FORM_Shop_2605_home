@@ -57,6 +57,34 @@ public class MailServiceImpl implements MailService {
     }
 
     @Override
+    public void sendPasswordResetCodeEmail(String email, String code) {
+        if (!"mail".equalsIgnoreCase(loginCodeDeliveryMode)) {
+            log.info("[MailService] password reset code email={} code={} mode={}",
+                    email,
+                    code,
+                    loginCodeDeliveryMode);
+            return;
+        }
+
+        sendMail(
+                email,
+                "[RE:FORM] 비밀번호 재설정 인증코드",
+                """
+                        안녕하세요. RE:FORM 입니다.
+
+                        비밀번호 재설정 인증코드는 아래와 같습니다.
+
+                        인증코드: %s
+
+                        이 코드는 5분 동안만 유효합니다.
+
+                        본인이 요청하지 않았다면 이 메일을 무시해 주세요. 비밀번호는 바뀌지 않습니다.
+                        """.formatted(code),
+                false
+        );
+    }
+
+    @Override
     public void sendTradeNotificationEmail(Member member, TradeNotificationTemplateDTO template) {
         if (member == null || member.getEmail() == null || member.getEmail().isBlank()) {
             log.warn("[MailService] skip trade mail - missing recipient email");

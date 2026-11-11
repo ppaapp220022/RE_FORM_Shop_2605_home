@@ -9,6 +9,7 @@ import com.re_form_shop_2605.dto.login.LoginVerificationRequestDTO;
 import com.re_form_shop_2605.dto.login.LogoutRequestDTO;
 import com.re_form_shop_2605.dto.login.LogoutSessionRequestDTO;
 import com.re_form_shop_2605.dto.login.MemberSecurityDTO;
+import com.re_form_shop_2605.dto.login.PasswordResetCodeRequestDTO;
 import com.re_form_shop_2605.dto.login.PasswordResetRequestDTO;
 import com.re_form_shop_2605.dto.login.TokenRefreshRequestDTO;
 import com.re_form_shop_2605.dto.login.TokenRefreshResponseDTO;
@@ -53,6 +54,8 @@ public interface AuthService {
     void logoutAll(MemberSecurityDTO principal);
 
     // 비밀번호 재설정
+    void sendPasswordResetCode(PasswordResetCodeRequestDTO requestDTO);
+
     void resetPassword(PasswordResetRequestDTO requestDTO);
 
     // refresh token 재발급
