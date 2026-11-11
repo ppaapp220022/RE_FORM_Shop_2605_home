@@ -9,11 +9,13 @@ import com.re_form_shop_2605.dto.login.LoginVerificationRequestDTO;
 import com.re_form_shop_2605.dto.login.LogoutRequestDTO;
 import com.re_form_shop_2605.dto.login.LogoutSessionRequestDTO;
 import com.re_form_shop_2605.dto.login.MemberSecurityDTO;
+import com.re_form_shop_2605.dto.login.PasswordResetCodeRequestDTO;
 import com.re_form_shop_2605.dto.login.PasswordResetRequestDTO;
 import com.re_form_shop_2605.dto.login.TokenRefreshRequestDTO;
 import com.re_form_shop_2605.dto.login.TokenRefreshResponseDTO;
 import com.re_form_shop_2605.dto.member.MemberRequestDTO;
 import com.re_form_shop_2605.dto.member.MemberResponseDTO;
+import com.re_form_shop_2605.entity.Enum.MemberStatus;
 import com.re_form_shop_2605.entity.member.Member;
 import com.re_form_shop_2605.repository.member.MemberRepository;
 import com.re_form_shop_2605.security.AuthException;
@@ -38,6 +40,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 /**
  * ─────────────────────────────────────────────────────
@@ -53,6 +56,10 @@ import java.util.concurrent.TimeUnit;
 public class AuthServiceImpl implements AuthService {
 
     private static final long LOGIN_CODE_EXPIRATION_SECONDS = 300L;
+    private static final long PASSWORD_RESET_CODE_EXPIRATION_SECONDS = 300L;
+    private static final long PASSWORD_RESET_RESEND_INTERVAL_SECONDS = 60L;
+    private static final int PASSWORD_RESET_MAX_FAILED_ATTEMPTS = 5;
+    private static final long PASSWORD_RESET_ATTEMPT_WINDOW_SECONDS = 3600L;
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
     private final AuthenticationManager authenticationManager;
@@ -124,6 +131,7 @@ public class AuthServiceImpl implements AuthService {
         Member member = memberRepository.findById(memberId)
                 .orElseThrow(() -> new IllegalArgumentException("회원이 존재하지 않습니다."));
         MemberSecurityDTO principal = (MemberSecurityDTO) customUserDetailsService.loadUserByUsername(member.getEmail());
+        assertAccountUsable(principal);
         LoginResponseDTO responseDTO = authTokenService.issueTokens(principal);
         log.info("[AuthServiceImpl] verifyLoginCode end memberId={} challengeId={}", memberId, requestDTO.challengeId());
         return responseDTO;
@@ -248,16 +256,75 @@ public class AuthServiceImpl implements AuthService {
     }
 
     @Override
-    public void resetPassword(PasswordResetRequestDTO requestDTO) {
-        // 이메일과 닉네임을 함께 확인한 뒤 새 비밀번호를 암호화해 갱신한다.
-        log.info("[AuthServiceImpl] resetPassword start email={}", requestDTO.email());
-        Member member = memberRepository.findByEmail(requestDTO.email())
-                .orElseThrow(() -> new IllegalArgumentException("회원이 존재하지 않습니다."));
-
-        if (!member.getNickname().equals(requestDTO.nickname())) {
-            throw new IllegalArgumentException("이메일과 닉네임이 일치하지 않습니다.");
+    public void sendPasswordResetCode(PasswordResetCodeRequestDTO requestDTO) {
+        // 가입 여부를 응답으로 드러내지 않도록, 없는 이메일이어도 같은 응답으로 끝낸다.
+        String email = requestDTO.email();
+        Member member = memberRepository.findByEmail(email).orElse(null);
+        if (member == null || member.getStatus() != MemberStatus.ACTIVE) {
+            log.info("[AuthServiceImpl] sendPasswordResetCode skipped email={}", email);
+            return;
         }
 
+        // 1분 안에 다시 요청하면 메일을 새로 보내지 않는다(메일 폭탄 방지).
+        String codeKey = buildPasswordResetKey(email);
+        Long remainingSeconds = redisTemplate.getExpire(codeKey, TimeUnit.SECONDS);
+        if (remainingSeconds != null && remainingSeconds > PASSWORD_RESET_CODE_EXPIRATION_SECONDS - PASSWORD_RESET_RESEND_INTERVAL_SECONDS) {
+            log.info("[AuthServiceImpl] sendPasswordResetCode throttled email={}", email);
+            return;
+        }
+
+        String code = generateLoginCode();
+        redisTemplate.opsForValue().set(codeKey, code, PASSWORD_RESET_CODE_EXPIRATION_SECONDS, TimeUnit.SECONDS);
+        // 메일은 응답과 분리해 보낸다. 가입된 이메일만 SMTP를 거치므로, 동기로 보내면
+        // 응답 시간이나 발송 실패(500)로 가입 여부가 드러난다.
+        CompletableFuture.runAsync(() -> {
+            try {
+                mailService.sendPasswordResetCodeEmail(email, code);
+            } catch (Exception ex) {
+                log.error("[AuthServiceImpl] password reset mail failed email={}", email, ex);
+            }
+        });
+        log.info("[AuthServiceImpl] sendPasswordResetCode issued email={} memberId={}", email, member.getMemberId());
+    }
+
+    @Override
+    public void resetPassword(PasswordResetRequestDTO requestDTO) {
+        // 이메일로 받은 인증코드가 맞을 때만 새 비밀번호를 암호화해 갱신한다.
+        log.info("[AuthServiceImpl] resetPassword start email={}", requestDTO.email());
+        String codeKey = buildPasswordResetKey(requestDTO.email());
+        String attemptsKey = buildPasswordResetAttemptsKey(requestDTO.email());
+
+        // 실패 횟수는 코드를 새로 받아도 초기화되지 않게 이메일 단위로 1시간 동안 센다.
+        // INCR로 세므로 동시에 여러 요청을 보내도 한 번씩만 기회가 줄어든다.
+        Object failed = redisTemplate.opsForValue().get(attemptsKey);
+        if (failed != null && Long.parseLong(failed.toString()) >= PASSWORD_RESET_MAX_FAILED_ATTEMPTS) {
+            throw new AuthException("인증코드를 여러 번 틀렸습니다. 1시간 뒤에 다시 시도해 주세요.");
+        }
+
+        Object savedCode = redisTemplate.opsForValue().get(codeKey);
+        if (savedCode == null) {
+            throw new AuthException("인증코드가 만료되었거나 존재하지 않습니다.");
+        }
+
+        if (!requestDTO.code().equals(savedCode.toString())) {
+            Long failedAttempts = redisTemplate.opsForValue().increment(attemptsKey);
+            if (failedAttempts != null && failedAttempts == 1L) {
+                redisTemplate.expire(attemptsKey, PASSWORD_RESET_ATTEMPT_WINDOW_SECONDS, TimeUnit.SECONDS);
+            }
+            if (failedAttempts != null && failedAttempts >= PASSWORD_RESET_MAX_FAILED_ATTEMPTS) {
+                redisTemplate.delete(codeKey);
+                throw new AuthException("인증코드를 여러 번 틀렸습니다. 1시간 뒤에 다시 시도해 주세요.");
+            }
+            throw new AuthException("인증코드가 일치하지 않습니다.");
+        }
+
+        // 같은 코드로 두 번 바꾸지 못하게, 지운 쪽만 진행한다.
+        if (!Boolean.TRUE.equals(redisTemplate.delete(codeKey))) {
+            throw new AuthException("인증코드가 만료되었거나 존재하지 않습니다.");
+        }
+        redisTemplate.delete(attemptsKey);
+        Member member = memberRepository.findByEmail(requestDTO.email())
+                .orElseThrow(() -> new AuthException("인증코드가 만료되었거나 존재하지 않습니다."));
         member.setPassword(passwordEncoder.encode(requestDTO.newPassword()));
         clearAllSessions(member.getMemberId());
         log.info("[AuthServiceImpl] resetPassword end email={} memberId={}", requestDTO.email(), member.getMemberId());
@@ -289,6 +356,7 @@ public class AuthServiceImpl implements AuthService {
         Member member = memberRepository.findById(memberId)
                 .orElseThrow(() -> new IllegalArgumentException("회원이 존재하지 않습니다."));
         MemberSecurityDTO loadedPrincipal = (MemberSecurityDTO) customUserDetailsService.loadUserByUsername(member.getEmail());
+        assertAccountUsable(loadedPrincipal);
         MemberSecurityDTO principal = new MemberSecurityDTO(
                 loadedPrincipal.getMemberId(),
                 loadedPrincipal.getUsername(),
@@ -300,9 +368,6 @@ public class AuthServiceImpl implements AuthService {
                 jwtTokenProvider.getLoginProvider(refreshToken),
                 loadedPrincipal.getAuthorities()
         );
-        String newAccessToken = jwtTokenProvider.generateAccessToken(principal, sessionId);
-        log.info("[AuthServiceImpl] refresh end memberId={} sessionId={}", memberId, sessionId);
-
         // [Refresh Token Rotation] 기존 리프레시 토큰을 삭제하고 새로 한 쌍을 발급한다.
         removeSession(memberId, sessionId);
         LoginResponseDTO newTokens = authTokenService.issueTokens(principal, sessionId);
@@ -334,6 +399,21 @@ public class AuthServiceImpl implements AuthService {
     private String buildSessionSetKey(Long memberId) {
         // 회원별 세션 ID 집합을 따로 유지해 전체 로그아웃과 세션 목록 조회를 빠르게 처리한다.
         return "auth:sessions:" + memberId;
+    }
+
+    private String buildPasswordResetKey(String email) {
+        return "auth:password-reset:" + email.toLowerCase();
+    }
+
+    private String buildPasswordResetAttemptsKey(String email) {
+        return "auth:password-reset-attempts:" + email.toLowerCase();
+    }
+
+    private void assertAccountUsable(MemberSecurityDTO principal) {
+        // 정지·탈퇴 회원에게는 새 토큰을 발급하지 않는다.
+        if (!principal.isEnabled() || !principal.isAccountNonLocked()) {
+            throw new AuthException("이용이 제한된 계정입니다.");
+        }
     }
 
     private String buildLoginCodeKey(String challengeId) {

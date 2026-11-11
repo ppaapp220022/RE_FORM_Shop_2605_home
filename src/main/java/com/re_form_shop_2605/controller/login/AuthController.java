@@ -10,6 +10,7 @@ import com.re_form_shop_2605.dto.login.LoginVerificationRequestDTO;
 import com.re_form_shop_2605.dto.login.LogoutRequestDTO;
 import com.re_form_shop_2605.dto.login.LogoutSessionRequestDTO;
 import com.re_form_shop_2605.dto.login.MemberSecurityDTO;
+import com.re_form_shop_2605.dto.login.PasswordResetCodeRequestDTO;
 import com.re_form_shop_2605.dto.login.PasswordResetRequestDTO;
 import com.re_form_shop_2605.dto.login.TokenRefreshRequestDTO;
 import com.re_form_shop_2605.dto.login.TokenRefreshResponseDTO;
@@ -218,12 +219,22 @@ public class AuthController {
     }
 
     @Operation(
+            summary = "비밀번호 재설정 인증코드 요청",
+            description = "가입한 이메일로 6자리 인증코드를 보냅니다. 가입 여부와 관계없이 같은 응답을 돌려줍니다."
+    )
+    @PostMapping("/password/reset/code")
+    public ResponseEntity<ApiResponse<Void>> sendPasswordResetCode(@Valid @RequestBody PasswordResetCodeRequestDTO requestDTO) {
+        authService.sendPasswordResetCode(requestDTO);
+        return ResponseEntity.ok(ApiResponse.ok(null, "가입된 이메일이라면 인증코드를 보냈습니다."));
+    }
+
+    @Operation(
             summary = "비밀번호 재설정",
-            description = "이메일과 닉네임을 확인한 뒤 새 비밀번호로 재설정합니다."
+            description = "이메일로 받은 인증코드를 확인한 뒤 새 비밀번호로 재설정합니다."
     )
     @PostMapping("/password/reset")
     public ResponseEntity<ApiResponse<Void>> resetPassword(@Valid @RequestBody PasswordResetRequestDTO requestDTO) {
-        // 본인 확인 정보가 맞으면 새 비밀번호를 암호화해 저장한다.
+        // 인증코드가 맞으면 새 비밀번호를 암호화해 저장한다.
         log.info("[AuthController] resetPassword start email={}", requestDTO.email());
         authService.resetPassword(requestDTO);
         log.info("[AuthController] resetPassword end email={}", requestDTO.email());

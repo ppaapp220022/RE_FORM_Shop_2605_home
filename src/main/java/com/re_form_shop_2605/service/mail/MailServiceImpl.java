@@ -30,28 +30,37 @@ public class MailServiceImpl implements MailService {
 
     @Override
     public void sendLoginCodeEmail(String email, String code) {
+        sendCodeEmail(email, code, "로그인 2차 인증코드",
+                "본인이 요청하지 않았다면 비밀번호를 변경하고 고객센터에 문의해 주세요.");
+    }
+
+    @Override
+    public void sendPasswordResetCodeEmail(String email, String code) {
+        sendCodeEmail(email, code, "비밀번호 재설정 인증코드",
+                "본인이 요청하지 않았다면 이 메일을 무시해 주세요. 비밀번호는 바뀌지 않습니다.");
+    }
+
+    // 인증코드 메일 공통: mail 모드가 아니면(로컬 개발) 메일 대신 로그로만 남긴다.
+    private void sendCodeEmail(String email, String code, String purpose, String warning) {
         if (!"mail".equalsIgnoreCase(loginCodeDeliveryMode)) {
-            log.info("[MailService] login verification code email={} code={} mode={}",
-                    email,
-                    code,
-                    loginCodeDeliveryMode);
+            log.info("[MailService] {} email={} code={} mode={}", purpose, email, code, loginCodeDeliveryMode);
             return;
         }
 
         sendMail(
                 email,
-                "[RE:FORM] 로그인 2차 인증코드",
+                "[RE:FORM] " + purpose,
                 """
                         안녕하세요. RE:FORM 입니다.
 
-                        로그인 2차 인증코드는 아래와 같습니다.
+                        %s는 아래와 같습니다.
 
                         인증코드: %s
 
                         이 코드는 5분 동안만 유효합니다.
 
-                        본인이 요청하지 않았다면 비밀번호를 변경하고 고객센터에 문의해 주세요.
-                        """.formatted(code),
+                        %s
+                        """.formatted(purpose, code, warning),
                 false
         );
     }

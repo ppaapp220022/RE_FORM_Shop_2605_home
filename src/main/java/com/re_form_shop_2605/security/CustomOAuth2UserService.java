@@ -11,6 +11,7 @@ import com.re_form_shop_2605.repository.member.socialMemberRepository;
 import com.re_form_shop_2605.entity.payment.PointWallet;
 import com.re_form_shop_2605.repository.payment.PointWalletRepository;
 import lombok.extern.log4j.Log4j2;
+import org.springframework.security.oauth2.core.OAuth2Error;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.oauth2.client.registration.ClientRegistration;
@@ -25,6 +26,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 /**
  * ─────────────────────────────────────────────────────
  * 작성자: 김민기
@@ -116,7 +118,8 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
                     .warningCount(0)
                     .emailEvent(false)
                     .build();
-            member.setPassword(passwordEncoder.encode("1111"));
+            // 소셜 회원은 이메일 로그인을 쓰지 않으므로 아무도 모르는 임의 비밀번호를 넣는다.
+            member.setPassword(passwordEncoder.encode(UUID.randomUUID().toString()));
             memberRepository.save(member);
 
             // 포인트 지갑 자동 생성 (소셜 신규 가입자 대상)
@@ -132,6 +135,10 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
         } else {
             // 기존 회원이면 소셜 로그인 principal만 새로 조립해 반환한다.
             member = result.get();
+            if (member.getStatus() != MemberStatus.ACTIVE) {
+                // 정지·탈퇴 회원은 소셜 로그인도 막는다. 실패 핸들러가 프론트 로그인 화면으로 돌려보낸다.
+                throw new OAuth2AuthenticationException(new OAuth2Error("account_restricted"), "이용이 제한된 계정입니다.");
+            }
         }
 
         // 이후 JWT 발급 시 local / kakao / google을 구분할 수 있도록 provider 정보를 principal에 담는다.

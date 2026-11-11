@@ -18,6 +18,7 @@ import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configuration.WebSecurityCustomizer;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -40,6 +41,8 @@ import java.util.Arrays;
 @Configuration
 @RequiredArgsConstructor
 @EnableWebSecurity
+// 컨트롤러의 @PreAuthorize가 실제로 동작하도록 메서드 보안을 켠다.
+@EnableMethodSecurity
 // 애플리케이션 전반의 인증/인가 규칙과 스프링 시큐리티 메인 체인을 정의하는 설정 클래스
 public class SecurityConfig {
 
@@ -157,6 +160,7 @@ public class SecurityConfig {
                                 "/api/auth/me",
                                 "/api/auth/token/refresh",
                                 "/api/auth/password/reset",
+                                "/api/auth/password/reset/code",
                                 "/api/auth/oauth2/**",
                                 "/api/auth/oauth/**",
                                 "/oauth2/**",
@@ -178,6 +182,8 @@ public class SecurityConfig {
                                 "/api/version"
                         )
                         .permitAll()
+                        // 관리자 API는 경로 단위로 막는다. 컨트롤러별 검사를 빠뜨려도 여기서 걸러진다.
+                        .requestMatchers("/api/admin/**").hasRole("ADMIN")
                         .anyRequest().authenticated()
                 )
                 // csrf 토큰을 사용 안함

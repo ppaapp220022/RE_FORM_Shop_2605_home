@@ -13,7 +13,6 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.HttpHeaders;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
@@ -21,8 +20,6 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
-import java.util.List;
-import java.util.stream.Collectors;
 /**
  * ─────────────────────────────────────────────────────
  * 작성자: 김민기
@@ -70,23 +67,22 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             }
 
             if (jwtTokenProvider.validateToken(token) && "access".equals(jwtTokenProvider.getTokenType(token))) {
-                // 토큰에서 직접 이메일과 권한 목록을 꺼내 SecurityContext를 복원한다.
-                // 매 요청마다 DB를 조회하는 비용을 줄이기 위해 토큰의 Claim 정보를 최대한 활용한다.
+                // 권한과 계정 상태는 토큰 claim이 아니라 DB 기준으로 판단한다.
+                // 그래야 정지·탈퇴·권한 변경이 토큰 만료를 기다리지 않고 바로 반영된다.
                 String email = jwtTokenProvider.getSubject(token);
-                List<SimpleGrantedAuthority> authorities = jwtTokenProvider.getRoles(token).stream()
-                        .map(SimpleGrantedAuthority::new)
-                        .collect(Collectors.toList());
-
-                // UserDetails를 매번 DB에서 로드하는 대신 토큰 정보로 임시 객체를 만들 수도 있으나,
-                // 계정 상태(정지 등) 확인이 필요하므로 여기서는 기존처럼 loadUserByUsername을 호출한다.
                 UserDetails userDetails = customUserDetailsService.loadUserByUsername(email);
-                UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
-                        userDetails,
-                        null,
-                        authorities
-                );
-                authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-                SecurityContextHolder.getContext().setAuthentication(authentication);
+                if (!userDetails.isEnabled() || !userDetails.isAccountNonLocked()) {
+                    // 인증을 세우지 않고 넘기면 보호된 경로에서 진입점이 403으로 응답한다.
+                    request.setAttribute("exception", "ACCOUNT_RESTRICTED");
+                } else {
+                    UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
+                            userDetails,
+                            null,
+                            userDetails.getAuthorities()
+                    );
+                    authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                    SecurityContextHolder.getContext().setAuthentication(authentication);
+                }
             }
         } catch (ExpiredJwtException ex) {
             request.setAttribute("exception", "EXPIRED_TOKEN");

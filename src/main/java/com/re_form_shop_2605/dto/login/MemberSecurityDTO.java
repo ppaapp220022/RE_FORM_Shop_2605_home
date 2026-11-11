@@ -35,7 +35,24 @@ public class MemberSecurityDTO extends User implements OAuth2User {
             String loginProvider,
             Collection<? extends GrantedAuthority> authorities
     ) {
-        super(username, password, authorities);
+        this(memberId, username, password, email, nickname, profileImageUrl, social, loginProvider, true, true, authorities);
+    }
+
+    // enabled=false(탈퇴), accountNonLocked=false(정지)면 Spring Security가 로그인과 인증을 거부한다.
+    public MemberSecurityDTO(
+            Long memberId,
+            String username,
+            String password,
+            String email,
+            String nickname,
+            String profileImageUrl,
+            boolean social,
+            String loginProvider,
+            boolean enabled,
+            boolean accountNonLocked,
+            Collection<? extends GrantedAuthority> authorities
+    ) {
+        super(username, password, enabled, true, true, accountNonLocked, authorities);
         this.memberId = memberId;
         this.email = email;
         this.nickname = nickname;
