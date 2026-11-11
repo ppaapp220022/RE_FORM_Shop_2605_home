@@ -77,6 +77,15 @@ public class PostImageServiceImpl implements PostImageService {
         String finalUrlPrefix = FINAL_URL_PREFIX + postId + "/";
         List<String> finalizedUrls = new ArrayList<>();
 
+        // 파일을 옮기거나 디렉터리를 만들기 전에 주소부터 모두 검사한다(거부되면 아무것도 남기지 않는다).
+        for (String imageUrl : imageUrls) {
+            if (StringUtils.hasText(imageUrl)
+                    && !imageUrl.startsWith(TEMP_URL_SEGMENT + memberId + "/")
+                    && !isOwnedFinalUrl(imageUrl, finalUrlPrefix)) {
+                throw new IllegalArgumentException("사용할 수 없는 이미지 주소입니다.");
+            }
+        }
+
         try {
             Files.createDirectories(finalDirectory);
 
@@ -153,7 +162,8 @@ public class PostImageServiceImpl implements PostImageService {
     }
 
     private boolean isOwnedFinalUrl(String imageUrl, String finalUrlPrefix) {
-        if (imageUrl.contains("..") || imageUrl.contains("\\")) {
+        // 퍼센트 인코딩(%2e%2e%2f)으로 경로 검사를 우회하지 못하게 '%'도 거부한다.
+        if (imageUrl.contains("..") || imageUrl.contains("\\") || imageUrl.contains("%")) {
             return false;
         }
         String fileName;
@@ -174,12 +184,8 @@ public class PostImageServiceImpl implements PostImageService {
 
         String tempPrefix = TEMP_URL_SEGMENT + memberId + "/";
         if (!imageUrl.startsWith(tempPrefix)) {
-            // 이미 승격된 이미지는 이 판매글 폴더나 시드 이미지만 허용한다.
-            // 다른 판매글의 이미지나 외부 URL을 붙이지 못하게 막는다.
-            if (isOwnedFinalUrl(imageUrl, finalUrlPrefix)) {
-                return imageUrl;
-            }
-            throw new IllegalArgumentException("사용할 수 없는 이미지 주소입니다.");
+            // 이미 승격된 이미지(이 판매글 폴더·시드)는 그대로 쓴다. 다른 주소는 finalizePostImageUrls에서 먼저 걸러진다.
+            return imageUrl;
         }
 
         String fileName = imageUrl.substring(tempPrefix.length());

@@ -433,7 +433,8 @@ class PostServiceImplTest {
                 "/uploads/post/" + (postId + 1) + "/other.png",
                 "https://evil.example.com/a.png",
                 "/uploads/post/" + postId + "/../" + (postId + 1) + "/other.png",
-                "/uploads/post/temp/" + (seller.getMemberId() + 1) + "/someone-else.png"
+                "/uploads/post/temp/" + (seller.getMemberId() + 1) + "/someone-else.png",
+                "/uploads/post/" + postId + "/%2e%2e%2f" + (postId + 1) + "%2fother.png"
         )) {
             assertThrows(IllegalArgumentException.class,
                     () -> postService.modifyPost(postId, seller.getMemberId(), update, List.of(url)),
