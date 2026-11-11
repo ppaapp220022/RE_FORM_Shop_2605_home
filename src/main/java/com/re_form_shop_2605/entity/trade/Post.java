@@ -14,7 +14,7 @@ import java.util.List;
 
 @Entity
 @Getter
-@ToString(exclude = {"sellerId", "images", "wishes", "chatRooms", "trade"}) // 연관 엔티티는 빼서 순환 참조·지연 로딩 예외를 막는다
+@ToString(exclude = {"sellerId", "images", "wishes", "chatRooms"}) // 연관 엔티티는 빼서 순환 참조·지연 로딩 예외를 막는다
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
@@ -106,8 +106,6 @@ public class Post extends BaseEntity {
     @Builder.Default
     private List<ChatRoom> chatRooms = new ArrayList<>();
 
-    @OneToOne(mappedBy = "post", fetch = FetchType.LAZY)
-    private Trade trade;
 
     // 판매 상태가 바뀌었는지 - 저장되면 PostStatusListener가 읽고 지운 뒤 이벤트를 발행한다
     @Transient

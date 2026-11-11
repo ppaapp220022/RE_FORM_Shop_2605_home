@@ -161,6 +161,16 @@ public class NotificationServiceImpl implements NotificationService {
     }
 
     @Override
+    public TradeNotificationTemplateDTO buildBuyerTradeCanceledTemplate(Long tradeId, String postTitle) {
+        return new TradeNotificationTemplateDTO(
+                NotificationType.TRADE,
+                "[RE:FORM] 판매자가 거래를 취소했습니다.",
+                "'" + postTitle + "' 거래를 판매자가 취소했습니다.",
+                buildTradeLink(tradeId)
+        );
+    }
+
+    @Override
     public TradeNotificationTemplateDTO buildBuyerTradeAcceptedTemplate(Long tradeId, String postTitle, boolean directTrade) {
         return new TradeNotificationTemplateDTO(
                 NotificationType.TRADE,

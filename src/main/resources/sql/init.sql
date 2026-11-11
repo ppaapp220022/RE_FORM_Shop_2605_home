@@ -137,7 +137,7 @@ CREATE TABLE IF NOT EXISTS trade (
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     received_at DATETIME NULL,
     PRIMARY KEY (trade_id),
-    UNIQUE KEY uk_trade_post_id (post_id),
+    KEY idx_trade_post_id (post_id), -- 취소 뒤 재거래를 위해 unique 아님 (진행 중 거래 하나는 서비스에서 검사)
     KEY idx_trade_buyer_id (buyer_id),
     KEY idx_trade_seller_id (seller_id),
     KEY idx_trade_status (status),

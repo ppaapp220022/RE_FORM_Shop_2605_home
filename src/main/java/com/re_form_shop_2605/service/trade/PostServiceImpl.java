@@ -12,10 +12,12 @@ import com.re_form_shop_2605.entity.Enum.*;
 import com.re_form_shop_2605.entity.member.Member;
 import com.re_form_shop_2605.entity.trade.Post;
 import com.re_form_shop_2605.entity.trade.PostImage;
+import com.re_form_shop_2605.entity.trade.Trade;
 import com.re_form_shop_2605.mapper.trade.PostMapper;
 import com.re_form_shop_2605.entity.trade.Wish;
 import com.re_form_shop_2605.repository.member.MemberRepository;
 import com.re_form_shop_2605.repository.trade.PostRepository;
+import com.re_form_shop_2605.repository.trade.TradeRepository;
 import com.re_form_shop_2605.repository.trade.WishRepository;
 import com.re_form_shop_2605.repository.trade.postImageRepository;
 import com.re_form_shop_2605.service.common.ServicePageResponse;
@@ -51,6 +53,7 @@ public class PostServiceImpl implements PostService {
     private static final int MAX_POST_IMAGES = 10;
 
     private final PostRepository postRepository;
+    private final TradeRepository tradeRepository;
     private final MemberRepository memberRepository;
     private final postImageRepository postImageRepository;
     private final WishRepository wishRepository;
@@ -157,7 +160,10 @@ public class PostServiceImpl implements PostService {
                 post.getCreatedAt(),
                 post.getUpdatedAt(),
                 seller,
-                post.getTrade() != null ? post.getTrade().getTradeId() : null
+                // 취소된 거래는 빼고 지금 진행 중인(또는 끝난) 거래만 알려준다.
+                tradeRepository.findFirstByPost_PostIdAndStatusNotOrderByTradeIdDesc(postId, TradeStatus.CANCELED)
+                        .map(Trade::getTradeId)
+                        .orElse(null)
         );
     }
 

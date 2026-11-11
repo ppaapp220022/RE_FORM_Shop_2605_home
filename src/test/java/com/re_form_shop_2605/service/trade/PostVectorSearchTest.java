@@ -535,7 +535,7 @@ class PostVectorSearchTest {
         when(postMapper.findPostsByCondition(any(), any(), any(), any(), any(), any(), any(), any(), any(Integer.class), any(Integer.class), any()))
                 .thenReturn(List.of());
         when(postMapper.countPostByCondition(any(), any(), any(), any(), any(), any(), eq("M"))).thenReturn(25);
-        PostServiceImpl service = new PostServiceImpl(null, null, null, null, null, null, null, postMapper, null, null, null);
+        PostServiceImpl service = new PostServiceImpl(null, null, null, null, null, null, null, null, postMapper, null, null, null);
 
         PageResponse<PostCardDTO> page = service.searchPosts(null, null, null, null, null, null, "M", "latest", 2, 20, null);
 
@@ -548,7 +548,7 @@ class PostVectorSearchTest {
     @Test
     void searchPosts_사이즈_필터의_공백과_대소문자를_정리하고_빈_값은_필터_없음() {
         PostMapper postMapper = mock(PostMapper.class);
-        PostServiceImpl service = new PostServiceImpl(null, null, null, null, null, null, null, postMapper, null, null, null);
+        PostServiceImpl service = new PostServiceImpl(null, null, null, null, null, null, null, null, postMapper, null, null, null);
 
         service.searchPosts(null, null, null, null, null, null, " xl ", null, 1, 20, null);
         service.searchPosts(null, null, null, null, null, null, "  ", null, 1, 20, null);

@@ -1,6 +1,10 @@
 package com.re_form_shop_2605.service.trade;
 
 
+import com.re_form_shop_2605.entity.chat.ChatRoom;
+import com.re_form_shop_2605.repository.chat.ChatRoomRepository;
+import org.springframework.jdbc.core.JdbcTemplate;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import com.re_form_shop_2605.dto.common.PageResponse;
 import com.re_form_shop_2605.dto.trade.*;
 import com.re_form_shop_2605.entity.Enum.DeliveryType;
@@ -51,6 +55,10 @@ class TradeServiceImplTest {
     private TradeRepository tradeRepository;
     @Autowired
     private PointWalletRepository pointWalletRepository;
+    @Autowired
+    private ChatRoomRepository chatRoomRepository;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     @Test
     void addTradeTest() {
@@ -392,6 +400,56 @@ class TradeServiceImplTest {
 
         PageResponse<ReviewResponseDTO> reviews = tradeService.readSellerReviews(seller.getMemberId(), 0, 10);
         assertEquals(10, reviews.content().size());
+    }
+
+    @Test
+    void 판매자가_취소한_판매글은_다른_구매자가_다시_거래할_수_있다() {
+        Member seller = createMember("retrade_seller");
+        Member firstBuyer = createMember("retrade_buyer1");
+        Member secondBuyer = createMember("retrade_buyer2");
+        Post post = createPost(seller, "retrade");
+
+        Long firstTradeId = tradeService.addTrade(firstBuyer.getMemberId(), new TradeRequestDTO(post.getPostId(), null));
+        tradeService.acceptTrade(seller.getMemberId(), firstTradeId);
+        tradeService.cancelTrade(seller.getMemberId(), firstTradeId);
+
+        Long secondTradeId = tradeService.addTrade(secondBuyer.getMemberId(), new TradeRequestDTO(post.getPostId(), null));
+
+        assertNotEquals(firstTradeId, secondTradeId);
+        assertEquals(TradeStatus.CANCELED, tradeRepository.findById(firstTradeId).orElseThrow().getStatus());
+        assertEquals(TradeStatus.REQUESTED, tradeRepository.findById(secondTradeId).orElseThrow().getStatus());
+    }
+
+    @Test
+    void 같은_구매자가_취소_뒤_다시_요청하면_채팅방이_새_거래로_연결된다() {
+        Member seller = createMember("rerequest_seller");
+        Member buyer = createMember("rerequest_buyer");
+        Post post = createPost(seller, "rerequest");
+
+        Long firstTradeId = tradeService.addTrade(buyer.getMemberId(), new TradeRequestDTO(post.getPostId(), null));
+        tradeService.cancelTrade(seller.getMemberId(), firstTradeId);
+        Long secondTradeId = tradeService.addTrade(buyer.getMemberId(), new TradeRequestDTO(post.getPostId(), null));
+
+        ChatRoom chatRoom = chatRoomRepository
+                .findByPost_PostIdAndBuyer_MemberId(post.getPostId(), buyer.getMemberId())
+                .orElseThrow();
+        Long linkedTradeId = jdbcTemplate.queryForObject(
+                "SELECT trade_id FROM chat_room WHERE chat_id = ?", Long.class, chatRoom.getChatId());
+        assertEquals(secondTradeId, linkedTradeId);
+    }
+
+    @Test
+    void 진행_중인_거래가_있으면_새_거래를_만들_수_없다() {
+        Member seller = createMember("active_trade_seller");
+        Member firstBuyer = createMember("active_trade_buyer1");
+        Member secondBuyer = createMember("active_trade_buyer2");
+        Post post = createPost(seller, "active trade");
+
+        tradeService.addTrade(firstBuyer.getMemberId(), new TradeRequestDTO(post.getPostId(), null));
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> tradeService.addTrade(secondBuyer.getMemberId(), new TradeRequestDTO(post.getPostId(), null)));
+        assertEquals("이미 거래가 진행 중인 게시글입니다.", ex.getMessage());
     }
 
     private Member createMember(String prefix) {

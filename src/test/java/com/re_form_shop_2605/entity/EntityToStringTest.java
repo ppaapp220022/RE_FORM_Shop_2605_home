@@ -16,12 +16,10 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 class EntityToStringTest {
 
     @Test
-    void 판매글과_거래가_서로_참조해도_toString이_끝난다() {
+    void 연관_엔티티가_있어도_toString이_끝난다() {
         Member seller = Member.builder().memberId(1L).email("s@test.com").nickname("s").build();
         Post post = Post.builder().postId(10L).sellerId(seller).title("t").build();
         Trade trade = Trade.builder().tradeId(100L).post(post).seller(seller).buyer(seller).build();
-        // Post.trade는 mappedBy라 빌더에 없으므로 리플렉션으로 순환을 만든다.
-        org.springframework.test.util.ReflectionTestUtils.setField(post, "trade", trade);
 
         assertThatCode(post::toString).doesNotThrowAnyException();
         assertThatCode(trade::toString).doesNotThrowAnyException();
