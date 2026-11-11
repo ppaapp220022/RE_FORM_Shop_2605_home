@@ -23,13 +23,17 @@ import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.after;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -41,6 +45,7 @@ class AuthServicePasswordResetTest {
 
     private static final String EMAIL = "user@test.com";
     private static final String KEY = "auth:password-reset:" + EMAIL;
+    private static final String ATTEMPTS_KEY = "auth:password-reset-attempts:" + EMAIL;
 
     private MemberRepository memberRepository;
     private PasswordEncoder passwordEncoder;
@@ -90,10 +95,21 @@ class AuthServicePasswordResetTest {
 
         authService.sendPasswordResetCode(new PasswordResetCodeRequestDTO(EMAIL));
 
+        // 메일은 응답과 분리해 비동기로 보낸다.
         ArgumentCaptor<String> code = ArgumentCaptor.forClass(String.class);
-        verify(mailService).sendPasswordResetCodeEmail(eq(EMAIL), code.capture());
+        verify(mailService, timeout(2000)).sendPasswordResetCodeEmail(eq(EMAIL), code.capture());
         assertThat(code.getValue()).matches("\\d{6}");
-        verify(valueOps).set(KEY, "0:" + code.getValue(), 300L, TimeUnit.SECONDS);
+        verify(valueOps).set(KEY, code.getValue(), 300L, TimeUnit.SECONDS);
+    }
+
+    @Test
+    void 메일_발송이_실패해도_요청은_성공으로_끝난다() {
+        when(memberRepository.findByEmail(EMAIL)).thenReturn(Optional.of(member(MemberStatus.ACTIVE)));
+        when(redisTemplate.getExpire(KEY, TimeUnit.SECONDS)).thenReturn(-2L);
+        doThrow(new IllegalStateException("smtp down")).when(mailService).sendPasswordResetCodeEmail(anyString(), anyString());
+
+        assertThatCode(() -> authService.sendPasswordResetCode(new PasswordResetCodeRequestDTO(EMAIL)))
+                .doesNotThrowAnyException();
     }
 
     @Test
@@ -103,7 +119,7 @@ class AuthServicePasswordResetTest {
 
         authService.sendPasswordResetCode(new PasswordResetCodeRequestDTO(EMAIL));
 
-        verify(mailService, never()).sendPasswordResetCodeEmail(anyString(), anyString());
+        verify(mailService, after(300).never()).sendPasswordResetCodeEmail(anyString(), anyString());
     }
 
     @Test
@@ -116,37 +132,62 @@ class AuthServicePasswordResetTest {
     }
 
     @Test
-    void 코드를_틀리면_실패_횟수를_올린다() {
-        when(valueOps.get(KEY)).thenReturn("1:123456");
-        when(redisTemplate.getExpire(KEY, TimeUnit.SECONDS)).thenReturn(200L);
+    void 코드를_틀리면_실패_횟수를_원자적으로_올린다() {
+        when(valueOps.get(KEY)).thenReturn("123456");
+        when(valueOps.increment(ATTEMPTS_KEY)).thenReturn(1L);
 
         assertThatThrownBy(() -> authService.resetPassword(new PasswordResetRequestDTO(EMAIL, "000000", "newpassword")))
                 .isInstanceOf(AuthException.class)
                 .hasMessageContaining("일치하지");
-        verify(valueOps).set(KEY, "2:123456", 200L, TimeUnit.SECONDS);
+        verify(redisTemplate).expire(ATTEMPTS_KEY, 3600L, TimeUnit.SECONDS);
         verify(passwordEncoder, never()).encode(anyString());
     }
 
     @Test
-    void 다섯_번_틀리면_코드를_폐기한다() {
-        when(valueOps.get(KEY)).thenReturn("4:123456");
+    void 다섯_번째로_틀리면_코드를_폐기한다() {
+        when(valueOps.get(KEY)).thenReturn("123456");
+        when(valueOps.get(ATTEMPTS_KEY)).thenReturn(4);
+        when(valueOps.increment(ATTEMPTS_KEY)).thenReturn(5L);
 
         assertThatThrownBy(() -> authService.resetPassword(new PasswordResetRequestDTO(EMAIL, "000000", "newpassword")))
                 .isInstanceOf(AuthException.class)
-                .hasMessageContaining("다시 요청");
+                .hasMessageContaining("1시간");
         verify(redisTemplate).delete(KEY);
+    }
+
+    @Test
+    void 실패가_쌓인_이메일은_새_코드가_맞아도_막는다() {
+        // 코드를 새로 받아도 실패 횟수는 초기화되지 않는다.
+        when(valueOps.get(ATTEMPTS_KEY)).thenReturn(5);
+        when(valueOps.get(KEY)).thenReturn("123456");
+
+        assertThatThrownBy(() -> authService.resetPassword(new PasswordResetRequestDTO(EMAIL, "123456", "newpassword")))
+                .isInstanceOf(AuthException.class)
+                .hasMessageContaining("1시간");
+        verify(passwordEncoder, never()).encode(anyString());
     }
 
     @Test
     void 코드가_맞으면_비밀번호를_바꾸고_코드를_지운다() {
         Member member = member(MemberStatus.ACTIVE);
-        when(valueOps.get(KEY)).thenReturn("0:123456");
+        when(valueOps.get(KEY)).thenReturn("123456");
+        when(redisTemplate.delete(KEY)).thenReturn(true);
         when(memberRepository.findByEmail(EMAIL)).thenReturn(Optional.of(member));
 
         authService.resetPassword(new PasswordResetRequestDTO(EMAIL, "123456", "newpassword"));
 
         assertThat(member.getPassword()).isEqualTo("encoded:newpassword");
-        verify(redisTemplate).delete(KEY);
+        verify(redisTemplate).delete(ATTEMPTS_KEY);
+    }
+
+    @Test
+    void 같은_코드로_동시에_두_번_바꾸면_한_번만_성공한다() {
+        when(valueOps.get(KEY)).thenReturn("123456");
+        when(redisTemplate.delete(KEY)).thenReturn(false); // 다른 요청이 먼저 지움
+
+        assertThatThrownBy(() -> authService.resetPassword(new PasswordResetRequestDTO(EMAIL, "123456", "newpassword")))
+                .isInstanceOf(AuthException.class);
+        verify(passwordEncoder, never()).encode(anyString());
     }
 
     @Test
