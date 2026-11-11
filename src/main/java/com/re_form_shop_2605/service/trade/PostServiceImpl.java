@@ -12,10 +12,12 @@ import com.re_form_shop_2605.entity.Enum.*;
 import com.re_form_shop_2605.entity.member.Member;
 import com.re_form_shop_2605.entity.trade.Post;
 import com.re_form_shop_2605.entity.trade.PostImage;
+import com.re_form_shop_2605.entity.trade.Trade;
 import com.re_form_shop_2605.mapper.trade.PostMapper;
 import com.re_form_shop_2605.entity.trade.Wish;
 import com.re_form_shop_2605.repository.member.MemberRepository;
 import com.re_form_shop_2605.repository.trade.PostRepository;
+import com.re_form_shop_2605.repository.trade.TradeRepository;
 import com.re_form_shop_2605.repository.trade.WishRepository;
 import com.re_form_shop_2605.repository.trade.postImageRepository;
 import com.re_form_shop_2605.service.common.ServicePageResponse;
@@ -32,6 +34,7 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.Objects;
 
 /**
@@ -50,6 +53,7 @@ public class PostServiceImpl implements PostService {
     private static final int MAX_POST_IMAGES = 10;
 
     private final PostRepository postRepository;
+    private final TradeRepository tradeRepository;
     private final MemberRepository memberRepository;
     private final postImageRepository postImageRepository;
     private final WishRepository wishRepository;
@@ -110,6 +114,13 @@ public class PostServiceImpl implements PostService {
     }
 
     @Override
+    // 상세 조회 1회마다 조회수를 올린다. 판매자 본인의 조회는 세지 않는다.
+    public void increaseViewCount(Long postId, Long viewerId) {
+        // 비로그인 조회는 viewerId가 없으므로, 어떤 회원 id와도 겹치지 않는 값으로 비교한다.
+        postRepository.increaseViewCount(postId, viewerId != null ? viewerId : -1L);
+    }
+
+    @Override
     @Transactional(readOnly = true)
     // 판매글 상세 화면에 필요한 본문, 이미지, 찜 여부 반환
     public PostDetailDTO readPost(Long postId, Long viewerId) {
@@ -149,7 +160,10 @@ public class PostServiceImpl implements PostService {
                 post.getCreatedAt(),
                 post.getUpdatedAt(),
                 seller,
-                post.getTrade() != null ? post.getTrade().getTradeId() : null
+                // 취소된 거래는 빼고 지금 진행 중인(또는 끝난) 거래만 알려준다.
+                tradeRepository.findFirstByPost_PostIdAndStatusNotOrderByTradeIdDesc(postId, TradeStatus.CANCELED)
+                        .map(Trade::getTradeId)
+                        .orElse(null)
         );
     }
 
@@ -311,13 +325,19 @@ public class PostServiceImpl implements PostService {
 
     private void applyPostModeration(Post post) {
         String contentCheck = buildModerationContent(post.getTitle(), post.getContent());
-        RiskAnalysisResultDTO moderation = moderationService.checkAndSave(
+        Optional<RiskAnalysisResultDTO> moderation = moderationService.tryCheckAndSave(
                 contentCheck,
                 TargetType.POST,
                 post.getPostId()
         );
-        post.updateRiskLevel(moderation.riskLevel());
-        log.info("[Post Moderation] postId={}, riskLevel={}", post.getPostId(), moderation.riskLevel());
+        if (moderation.isEmpty()) {
+            // API 장애로 검사하지 못했으면 기존 위험도를 그대로 둔다. (null로 덮으면 이전 HIGH 판정이 사라진다)
+            // 새 글이면 riskLevel이 null로 남아 위험 탐지 배치가 다시 검사한다.
+            log.warn("[Post Moderation] postId={} 검사 실패 - 기존 riskLevel={} 유지", post.getPostId(), post.getRiskLevel());
+            return;
+        }
+        post.updateRiskLevel(moderation.get().riskLevel());
+        log.info("[Post Moderation] postId={}, riskLevel={}", post.getPostId(), moderation.get().riskLevel());
     }
 
     private String buildModerationContent(String title, String content) {

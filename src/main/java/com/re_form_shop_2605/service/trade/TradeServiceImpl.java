@@ -82,7 +82,8 @@ public class TradeServiceImpl implements TradeService {
     public Long addTrade(Long buyerId, TradeRequestDTO tradeRequestDTO) {
         Member buyer = memberRepository.findById(buyerId)
                 .orElseThrow(() -> new IllegalArgumentException("회원이 존재하지 않습니다."));
-        Post post = postRepository.findById(tradeRequestDTO.postId())
+        // 판매글 행을 잠근 채로 상태·진행 중 거래를 확인해야 동시 요청이 둘 다 통과하지 않는다.
+        Post post = postRepository.findByIdForUpdate(tradeRequestDTO.postId())
                 .orElseThrow(() -> new IllegalArgumentException("판매글이 존재하지 않습니다."));
 
         if (post.getSellerId().getMemberId().equals(buyerId)) {
@@ -93,8 +94,9 @@ public class TradeServiceImpl implements TradeService {
             throw new IllegalArgumentException("판매 중인 게시글만 거래를 생성할 수 있습니다.");
         }
 
-        if (tradeRepository.existsByPost_PostId(post.getPostId())) {
-            throw new IllegalArgumentException("이미 거래가 생성된 게시글입니다.");
+        // 취소된 거래는 이력으로 남겨 두고 새 거래를 만든다(결제·채팅 기록이 거래별로 남는다).
+        if (tradeRepository.existsByPost_PostIdAndStatusNot(post.getPostId(), TradeStatus.CANCELED)) {
+            throw new IllegalArgumentException("이미 거래가 진행 중인 게시글입니다.");
         }
 
         Trade trade = Trade.builder()
@@ -236,6 +238,12 @@ public class TradeServiceImpl implements TradeService {
                 trade.getPost().getPostId(), trade.getBuyer().getMemberId(),
                 "[RE:FORM] 판매자가 거래를 취소했습니다."
         );
+        // 다른 상태 변경과 같이 구매자에게 알리고 실시간 화면을 갱신한다.
+        sendTradeNotice(trade.getBuyer(), notificationService.buildBuyerTradeCanceledTemplate(
+                trade.getTradeId(),
+                trade.getPost().getTitle()
+        ));
+        tradeRealtimeEventService.publishTradeUpdated(trade, "TRADE_CANCELED");
     }
 
     @Override

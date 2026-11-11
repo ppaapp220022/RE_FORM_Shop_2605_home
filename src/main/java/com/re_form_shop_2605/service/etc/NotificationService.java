@@ -36,6 +36,8 @@ public interface NotificationService {
     // 거래 생성 직후 판매자 안내용 템플릿
     TradeNotificationTemplateDTO buildSellerTradeCreatedTemplate(Long tradeId, String postTitle);
 
+    TradeNotificationTemplateDTO buildBuyerTradeCanceledTemplate(Long tradeId, String postTitle);
+
     // 거래 수락 직후 구매자 안내용 템플릿
     TradeNotificationTemplateDTO buildBuyerTradeAcceptedTemplate(Long tradeId, String postTitle, boolean directTrade);
 

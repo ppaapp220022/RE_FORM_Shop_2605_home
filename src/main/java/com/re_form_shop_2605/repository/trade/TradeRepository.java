@@ -4,6 +4,7 @@ import com.re_form_shop_2605.entity.Enum.TradeStatus;
 import com.re_form_shop_2605.entity.trade.Trade;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 //import org.springframework.security.core.parameters.P;
@@ -66,7 +67,22 @@ public interface TradeRepository extends JpaRepository<Trade, Long> {
 
     int countByBuyer_MemberIdAndStatus(Long memberId, TradeStatus status);
 
-    boolean existsByPost_PostId(Long postId);
+    /* 취소되지 않은(진행 중이거나 끝난) 거래가 있는지. 판매글당 하나만 허용한다 */
+    boolean existsByPost_PostIdAndStatusNot(Long postId, TradeStatus status);
+
+    /* 판매글의 가장 최근 거래 (취소된 거래 포함) */
+    Optional<Trade> findFirstByPost_PostIdOrderByTradeIdDesc(Long postId);
+
+    /* 판매글의 취소되지 않은 가장 최근 거래 */
+    Optional<Trade> findFirstByPost_PostIdAndStatusNotOrderByTradeIdDesc(Long postId, TradeStatus status);
+
+    /*
+     * 같은 구매자가 취소 뒤 다시 거래를 요청하면 기존 채팅방을 새 거래에 연결한다.
+     * ChatRoom.trade가 updatable=false라 JPA로는 바뀌지 않아 직접 갱신한다.
+     */
+    @Modifying
+    @Query(value = "UPDATE chat_room SET trade_id = :tradeId WHERE chat_id = :chatId", nativeQuery = true)
+    int relinkChatRoomTrade(@Param("chatId") Long chatId, @Param("tradeId") Long tradeId);
 
     List<Trade> findAllByBuyer_MemberIdOrderByTradeIdDesc(Long buyerId);
 
@@ -98,13 +114,6 @@ public interface TradeRepository extends JpaRepository<Trade, Long> {
             ORDER BY t.createdAt DESC, t.tradeId DESC
             """)
     List<Trade> findRecentTradesForAdminMember(@Param("memberId") Long memberId);
-
-    @Query("""
-            SELECT t.tradeId
-            FROM Trade t
-            WHERE t.post.postId = :postId
-            """)
-    Optional<Long> findTradeIdByPostId(@Param("postId") Long postId);
 
     @Query("""
             SELECT COALESCE(SUM(t.tradePrice), 0)

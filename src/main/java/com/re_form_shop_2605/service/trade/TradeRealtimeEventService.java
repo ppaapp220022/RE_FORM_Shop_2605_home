@@ -4,6 +4,7 @@ import com.re_form_shop_2605.dto.trade.TradeRealtimeEventDTO;
 import com.re_form_shop_2605.entity.chat.ChatRoom;
 import com.re_form_shop_2605.entity.trade.Trade;
 import com.re_form_shop_2605.repository.chat.ChatRoomRepository;
+import com.re_form_shop_2605.repository.trade.TradeRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
@@ -19,6 +20,7 @@ import java.time.LocalDateTime;
 public class TradeRealtimeEventService {
 
     private final ChatRoomRepository chatRoomRepository;
+    private final TradeRepository tradeRepository;
     private final SimpMessagingTemplate messagingTemplate;
 
     @Transactional
@@ -36,8 +38,10 @@ public class TradeRealtimeEventService {
 
         if (chatRoom.getTrade() == null
                 || !chatRoom.getTrade().getTradeId().equals(trade.getTradeId())) {
+            // ChatRoom.trade는 updatable=false라 save로는 DB에 반영되지 않는다(취소 뒤 같은 구매자가 다시 요청한 경우).
+            // DB는 직접 갱신하고, 메모리의 엔티티도 맞춰 둔다.
+            tradeRepository.relinkChatRoomTrade(chatRoom.getChatId(), trade.getTradeId());
             chatRoom.connectTrade(trade);
-            chatRoom = chatRoomRepository.save(chatRoom);
         }
 
         return chatRoom;

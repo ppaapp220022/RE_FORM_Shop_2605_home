@@ -42,6 +42,7 @@ public class PostImageServiceImpl implements PostImageService {
     private static final int MAX_THUMBNAIL_HEIGHT = 480;
     private static final String TEMP_URL_SEGMENT = "/uploads/post/temp/";
     private static final String FINAL_URL_PREFIX = "/uploads/post/";
+    private static final String SEED_URL_PREFIX = "/uploads/post/seed/"; // dummy.sql 시드 판매글 이미지
     private static final String THUMBNAIL_PREFIX = "thumb_";
     private final Path uploadRootPath;
 
@@ -75,6 +76,15 @@ public class PostImageServiceImpl implements PostImageService {
         Path finalDirectory = uploadRootPath.resolve(String.valueOf(postId));
         String finalUrlPrefix = FINAL_URL_PREFIX + postId + "/";
         List<String> finalizedUrls = new ArrayList<>();
+
+        // 파일을 옮기거나 디렉터리를 만들기 전에 주소부터 모두 검사한다(거부되면 아무것도 남기지 않는다).
+        for (String imageUrl : imageUrls) {
+            if (StringUtils.hasText(imageUrl)
+                    && !imageUrl.startsWith(TEMP_URL_SEGMENT + memberId + "/")
+                    && !isOwnedFinalUrl(imageUrl, finalUrlPrefix)) {
+                throw new IllegalArgumentException("사용할 수 없는 이미지 주소입니다.");
+            }
+        }
 
         try {
             Files.createDirectories(finalDirectory);
@@ -151,6 +161,22 @@ public class PostImageServiceImpl implements PostImageService {
         }
     }
 
+    private boolean isOwnedFinalUrl(String imageUrl, String finalUrlPrefix) {
+        // 퍼센트 인코딩(%2e%2e%2f)으로 경로 검사를 우회하지 못하게 '%'도 거부한다.
+        if (imageUrl.contains("..") || imageUrl.contains("\\") || imageUrl.contains("%")) {
+            return false;
+        }
+        String fileName;
+        if (imageUrl.startsWith(finalUrlPrefix)) {
+            fileName = imageUrl.substring(finalUrlPrefix.length());
+        } else if (imageUrl.startsWith(SEED_URL_PREFIX)) {
+            fileName = imageUrl.substring(SEED_URL_PREFIX.length());
+        } else {
+            return false;
+        }
+        return !fileName.isEmpty() && !fileName.contains("/");
+    }
+
     private String finalizeSingleImageUrl(Long postId, Long memberId, String imageUrl, Path finalDirectory, String finalUrlPrefix) throws IOException {
         if (!StringUtils.hasText(imageUrl)) {
             return imageUrl;
@@ -158,6 +184,7 @@ public class PostImageServiceImpl implements PostImageService {
 
         String tempPrefix = TEMP_URL_SEGMENT + memberId + "/";
         if (!imageUrl.startsWith(tempPrefix)) {
+            // 이미 승격된 이미지(이 판매글 폴더·시드)는 그대로 쓴다. 다른 주소는 finalizePostImageUrls에서 먼저 걸러진다.
             return imageUrl;
         }
 

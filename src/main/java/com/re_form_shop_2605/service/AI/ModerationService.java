@@ -72,6 +72,15 @@ public class ModerationService {
      * - riskLevel != null -> 유해 (reason, suggestion 포함)
      */
     public RiskAnalysisResultDTO checkAndSave(String content, TargetType targetType, Long targetId) {
+        // 검사에 실패하면(API 장애) 정상으로 간주한다. 채팅처럼 막히면 안 되는 곳에서 쓴다.
+        return tryCheckAndSave(content, targetType, targetId).orElseGet(RiskAnalysisResultDTO::safe);
+    }
+
+    /**
+     * checkAndSave와 같지만, API 장애로 검사하지 못했으면 빈 값을 돌려준다.
+     * "정상 판정"과 "검사 못 함"을 구분해야 하는 곳(판매글의 기존 위험도 유지)에서 쓴다.
+     */
+    public Optional<RiskAnalysisResultDTO> tryCheckAndSave(String content, TargetType targetType, Long targetId) {
         try {
             log.info("[Moderation] start targetType={}, targetId={}, contentPreview=\"{}\"",
                     targetType, targetId, preview(content));
@@ -80,21 +89,20 @@ public class ModerationService {
             if (localHit != null) {
                 log.info("[Moderation][LocalRule] matched targetType={}, targetId={}, riskLevel={}, reason=\"{}\", normalized=\"{}\"",
                         targetType, targetId, localHit.riskLevel(), localHit.reason(), localHit.normalizedContent());
-                return persistModerationResult(targetType, targetId, localHit.riskLevel(), localHit.reason(), content);
+                return Optional.of(persistModerationResult(targetType, targetId, localHit.riskLevel(), localHit.reason(), content));
             }
 
             ModerationDecision decision = evaluate(content, targetType, targetId);
 
             if (!decision.flagged()) {
                 clearExistingModerationResult(targetType, targetId);
-                return RiskAnalysisResultDTO.safe();
+                return Optional.of(RiskAnalysisResultDTO.safe());
             }
-            return persistModerationResult(targetType, targetId, decision.riskLevel(), decision.reason(), content);
+            return Optional.of(persistModerationResult(targetType, targetId, decision.riskLevel(), decision.reason(), content));
 
         } catch (Exception e) {
-            // fallback API 장애 시 -> 정상 처리
-            log.error("[Moderation] API 호출 실패 -> fallback: {}", e.getMessage());
-            return RiskAnalysisResultDTO.safe();
+            log.error("[Moderation] API 호출 실패 -> 검사 결과 없음: {}", e.getMessage());
+            return Optional.empty();
         }
     }
 

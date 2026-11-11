@@ -16,7 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 @Getter
-@ToString
+@ToString(exclude = {"socialMembers", "interestKeywords", "chatMessages", "chatRooms", "communityPosts", "replies", "interestSetting"}) // 연관 엔티티는 빼서 순환 참조·지연 로딩 예외를 막는다
 @Builder
 @AllArgsConstructor
 @NoArgsConstructor
@@ -51,40 +51,50 @@ public class Member extends BaseEntity {
     private String bio; // 회원 자기소개
 
     @Column(name = "manner_score",  nullable = false, precision = 3, scale = 2)
+    @Builder.Default
     private BigDecimal mannerScore = BigDecimal.valueOf(0.00); // 매너 평균 점수
 
     @Enumerated(EnumType.STRING)
     @Column(name = "role", nullable = false, length = 20)
+    @Builder.Default
     private Role role = Role.USER; // 사용자 분류(유저, 관리자)
 
     @Setter
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 20)
+    @Builder.Default
     private MemberStatus status = MemberStatus.ACTIVE; // 활동상태 (활성화/정지/탈퇴)
 
     @Setter
     @Column(name = "warning_count" , nullable = false)
+    @Builder.Default
     private int warningCount = 0; // 누적 경고 횟수
 
     @Column(name = "email_event", nullable = false)
     private boolean emailEvent; // 이벤트 이메일 수신 여부
 
     @OneToMany(mappedBy = "member", fetch = FetchType.LAZY)
+    @Builder.Default
     private List<SocialMember> socialMembers = new ArrayList<>();
 
     @OneToMany(mappedBy = "member", fetch = FetchType.LAZY)
+    @Builder.Default
     private List<InterestKeyword> interestKeywords = new ArrayList<>();
 
     @OneToMany(mappedBy = "member")
+    @Builder.Default
     private List<ChatMessage> chatMessages = new ArrayList<>();
 
     @OneToMany(mappedBy = "buyer")
+    @Builder.Default
     private List<ChatRoom> chatRooms = new ArrayList<>();
 
     @OneToMany(mappedBy = "member")
+    @Builder.Default
     private List<CommunityPost> communityPosts = new ArrayList<>();
 
     @OneToMany(mappedBy = "member")
+    @Builder.Default
     private List<Reply> replies = new ArrayList<>();
 
     @OneToOne(mappedBy = "member", fetch = FetchType.LAZY)

@@ -29,6 +29,8 @@ public interface PostService {
     // 판매글 상세 정보 조회
     PostDetailDTO readPost(Long postId, Long viewerId);
 
+    void increaseViewCount(Long postId, Long viewerId);
+
     // 판매글 목록을 페이지 단위 조회
     PageResponse<PostCardDTO> readAllPosts(Long viewerId, int page, int size);
 

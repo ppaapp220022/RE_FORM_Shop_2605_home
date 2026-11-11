@@ -14,7 +14,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 @Getter
-@ToString
+@ToString(exclude = {"post", "buyer", "seller", "chatRooms"}) // 연관 엔티티는 빼서 순환 참조·지연 로딩 예외를 막는다
 @Builder
 @AllArgsConstructor
 @NoArgsConstructor
@@ -36,11 +36,11 @@ public class Trade extends BaseEntity {
     private Long tradeId;
 
     // 연결 판매글
-    @OneToOne(fetch = FetchType.LAZY, optional = false)
+    // 판매글 하나에 거래가 여러 번 생길 수 있다(취소 뒤 다시 거래). 진행 중인 거래는 하나만 허용하며 서비스에서 검사한다.
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(
             name = "post_id",
             nullable = false,
-            unique = true,
             foreignKey = @ForeignKey(name = "fk_trade_post")
     )
     private Post post;
@@ -111,6 +111,7 @@ public class Trade extends BaseEntity {
 
     // 연결 채팅방 목록
     @OneToMany(mappedBy = "trade")
+    @Builder.Default
     private List<ChatRoom> chatRooms = new ArrayList<>();
 
 //    @OneToOne(mappedBy = "trade", fetch = FetchType.LAZY)

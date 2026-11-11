@@ -9,6 +9,7 @@ import com.re_form_shop_2605.entity.Enum.PostStatus;
 import com.re_form_shop_2605.entity.Enum.ReportTargetType;
 import com.re_form_shop_2605.entity.trade.Post;
 import com.re_form_shop_2605.entity.trade.PostImage;
+import com.re_form_shop_2605.entity.trade.Trade;
 import com.re_form_shop_2605.repository.etc.ReportRepository;
 import com.re_form_shop_2605.repository.trade.PostRepository;
 import com.re_form_shop_2605.repository.trade.TradeRepository;
@@ -163,7 +164,7 @@ public class AdminPostServiceImpl implements AdminPostService {
 
     // 거래 상세가 필요 없을 때는 trade 엔티티 전체 대신 ID만 조회한다.
     private Long readTradeId(Long postId) {
-        return tradeRepository.findTradeIdByPostId(postId).orElse(null);
+        return tradeRepository.findFirstByPost_PostIdOrderByTradeIdDesc(postId).map(Trade::getTradeId).orElse(null);
     }
 
     // 목록 화면에서는 게시글별 count 쿼리를 반복하지 않도록 신고 수를 한 번에 집계한다.
