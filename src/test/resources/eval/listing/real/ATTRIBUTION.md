@@ -33,3 +33,11 @@
 | real-27.jpg | [Finland fan ice hockey jersey.JPG](https://commons.wikimedia.org/wiki/File:Finland_fan_ice_hockey_jersey.JPG) | Santeri Viinamäki | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0) |
 | real-28.jpg | [Portugal ice hockey national team jersey.jpg](https://commons.wikimedia.org/wiki/File:Portugal_ice_hockey_national_team_jersey.jpg) | Nhl4hamilton / Chit-Chat . | Public domain |
 | real-29.jpg | [Andrew luck jersey.jpg](https://commons.wikimedia.org/wiki/File:Andrew_luck_jersey.jpg) | Eric Drost | [CC BY 2.0](https://creativecommons.org/licenses/by/2.0) |
+| real-30.jpg | [Lucky-Goldstar FC Piyapong Pue-on's Uniform, NMKCH.jpg](https://commons.wikimedia.org/wiki/File:Lucky-Goldstar_FC_Piyapong_Pue-on%27s_Uniform,_NMKCH.jpg) | Exj | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0) |
+| real-31.jpg | [Korea and Japan 2012 Olympic Football Shirts.jpg](https://commons.wikimedia.org/wiki/File:Korea_and_Japan_2012_Olympic_Football_Shirts.jpg) | Mark Healey | [CC BY-SA 2.0](https://creativecommons.org/licenses/by-sa/2.0) |
+| real-32.jpg | [Doosan 39 fans.jpg](https://commons.wikimedia.org/wiki/File:Doosan_39_fans.jpg) | Raelene Gutierrez from Sydney, Australia | [CC BY 2.0](https://creativecommons.org/licenses/by/2.0) |
+| real-33.jpg | [170406 LG 트윈스 시구 1.png](https://commons.wikimedia.org/wiki/File:170406_LG_%ED%8A%B8%EC%9C%88%EC%8A%A4_%EC%8B%9C%EA%B5%AC_1.png) | Freezing Time (프리징타임) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0) |
+| real-34.jpg | [SSG Landers Landy 2024 Behind.jpg](https://commons.wikimedia.org/wiki/File:SSG_Landers_Landy_2024_Behind.jpg) | Alvis Jean | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0) |
+| real-35.jpg | [SSG Landers Landy 2024 Front.jpg](https://commons.wikimedia.org/wiki/File:SSG_Landers_Landy_2024_Front.jpg) | Alvis Jean | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0) |
+
+real-30~35는 한국 구단·대표팀 사진입니다(2026-11-15 추가). 원본 폭이 800px보다 커서 가로 800px로 줄였고, real-33은 PNG 원본을 JPEG으로 바꿨습니다.
