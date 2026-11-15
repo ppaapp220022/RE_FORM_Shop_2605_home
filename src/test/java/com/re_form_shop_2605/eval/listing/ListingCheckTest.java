@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -25,6 +26,35 @@ class ListingCheckTest {
     private static final ListingEvalCase SEOUL = evalCase(
             render("FC SEOUL", "10"),
             new ListingEvalCase.Expect(List.of("FC서울", "서울"), "10", null, List.of(), List.of("정품"), false));
+
+    @Test
+    void judgeImageDefaultsToRealDatasetOnly() {
+        String dataset = System.getProperty("eval.listing.dataset");
+        String judgeImage = System.getProperty("eval.judgeImage");
+        try {
+            System.clearProperty("eval.judgeImage");
+            System.clearProperty("eval.listing.dataset");
+            assertFalse(ListingSuggestEvalTest.judgeWithImage());
+            System.setProperty("eval.listing.dataset", "real");
+            assertTrue(ListingSuggestEvalTest.judgeWithImage());
+            System.setProperty("eval.judgeImage", "false");
+            assertFalse(ListingSuggestEvalTest.judgeWithImage());
+            System.clearProperty("eval.listing.dataset");
+            System.setProperty("eval.judgeImage", "true");
+            assertTrue(ListingSuggestEvalTest.judgeWithImage());
+        } finally {
+            restore("eval.listing.dataset", dataset);
+            restore("eval.judgeImage", judgeImage);
+        }
+    }
+
+    private static void restore(String key, String value) {
+        if (value == null) {
+            System.clearProperty(key);
+        } else {
+            System.setProperty(key, value);
+        }
+    }
 
     @Test
     void passesCleanListing() {
